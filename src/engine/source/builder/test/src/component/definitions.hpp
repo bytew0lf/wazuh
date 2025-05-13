@@ -2,24 +2,24 @@
 #define _BUILDER_TEST_DEFINITIONS_HPP
 
 #include <base/behaviour.hpp>
+#include <builder/allowedFields.hpp>
 #include <builder/builder.hpp>
 #include <defs/mockDefinitions.hpp>
 #include <logpar/logpar.hpp>
 #include <schemf/ivalidator.hpp>
 #include <schemf/mockSchema.hpp>
-#include <sockiface/mockSockFactory.hpp>
 #include <store/mockStore.hpp>
 
 using namespace base::test;
 using namespace store::mocks;
 using namespace schemf::mocks;
 using namespace defs::mocks;
-using namespace sockiface::mocks;
 
 namespace builder::test
 {
 
 auto constexpr WAZUH_LOGPAR_TYPES_JSON = R"({
+    "name": "name",
     "fields": {
         "wazuh.message": "text",
         "event.code": "text"
@@ -307,7 +307,6 @@ struct Mocks
     std::shared_ptr<MockSchema> m_spSchemf;
     std::shared_ptr<MockDefinitionsBuilder> m_spDefBuilder;
     std::shared_ptr<MockDefinitions> m_spDef;
-    std::shared_ptr<MockSockFactory> m_spSockFactory;
 };
 
 template<typename T>
@@ -324,7 +323,6 @@ public:
         m_spMocks->m_spSchemf = std::make_shared<MockSchema>();
         m_spMocks->m_spDefBuilder = std::make_shared<MockDefinitionsBuilder>();
         m_spMocks->m_spDef = std::make_shared<MockDefinitions>();
-        m_spMocks->m_spSockFactory = std::make_shared<sockiface::mocks::MockSockFactory>();
         initializeBuilder();
     }
 
@@ -332,15 +330,21 @@ public:
     {
         builder::BuilderDeps builderDeps;
         builderDeps.logparDebugLvl = 0;
+
+        ON_CALL(*m_spMocks->m_spSchemf, hasField(DotPath("wazuh.message"))).WillByDefault(testing::Return(true));
+        ON_CALL(*m_spMocks->m_spSchemf, hasField(DotPath("event.code"))).WillByDefault(testing::Return(true));
+        ON_CALL(*m_spMocks->m_spSchemf, isArray(DotPath("wazuh.message"))).WillByDefault(testing::Return(false));
+        ON_CALL(*m_spMocks->m_spSchemf, isArray(DotPath("event.code"))).WillByDefault(testing::Return(false));
+
         builderDeps.logpar =
             std::make_shared<hlp::logpar::Logpar>(json::Json {WAZUH_LOGPAR_TYPES_JSON}, m_spMocks->m_spSchemf);
         builderDeps.kvdbScopeName = "builder";
         builderDeps.kvdbManager = nullptr;
-        builderDeps.sockFactory = m_spMocks->m_spSockFactory;
-        builderDeps.wdbManager = nullptr;
+
+        auto emptyAllowedFields = std::make_shared<builder::AllowedFields>();
 
         m_spBuilder = std::make_shared<builder::Builder>(
-            m_spMocks->m_spStore, m_spMocks->m_spSchemf, m_spMocks->m_spDefBuilder, builderDeps);
+            m_spMocks->m_spStore, m_spMocks->m_spSchemf, m_spMocks->m_spDefBuilder, emptyAllowedFields, builderDeps);
     }
 };
 

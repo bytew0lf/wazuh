@@ -32,9 +32,7 @@ class ApiConnector:
             # Create test request
             request = api_tester.RunPost_Request()
             request.name = self.session_name
-            request.queue = chr(self.config['queue'])
-            request.location = self.config['full_location']
-            request.message = event
+            request.ndjson_event = event
 
             request.namespaces.extend(self.config['namespaces'])
 
@@ -54,7 +52,7 @@ class ApiConnector:
                 exit(1)
             response_post = ParseDict(response, api_tester.RunPost_Response())
             if response_post.status != api_engine.OK:
-                print("Run error: {}".format(response_post.error))
+                print("\033[91mRun error: {}\033[0m".format(response_post.error))
                 exit(1)
 
             return response_post

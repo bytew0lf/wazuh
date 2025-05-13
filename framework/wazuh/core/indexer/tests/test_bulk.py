@@ -1,7 +1,8 @@
-import pytest
+import json
 from unittest.mock import AsyncMock
 
-from wazuh.core.indexer.bulk import Operation, BulkMetadata, BulkDoc, MixinBulk, RequiresClient
+import pytest
+from wazuh.core.indexer.bulk import BulkDoc, BulkMetadata, MixinBulk, Operation
 
 
 def test_bulk_action_values():
@@ -19,7 +20,7 @@ def test_bulk_action_exists_with_valid_action():
 
 
 def test_bulk_action_exists_with_invalid_action():
-    """Check that the `exists` method works as expected with invalid options"""
+    """Check that the `exists` method works as expected with invalid options."""
     assert Operation.exists('invalid_action') is False
     assert Operation.exists('') is False
     assert Operation.exists('CREATE') is False
@@ -28,38 +29,39 @@ def test_bulk_action_exists_with_invalid_action():
 def test_bulk_metadata_decode():
     """Check that the `decode` method works as expected."""
     metadata = BulkMetadata(index='test_index', doc_id='1', operation=Operation.CREATE)
-    expected_output = {'create': {'_index': 'test_index', '_id': '1'}}
+    expected_output = b'{"create": {"_index": "test_index", "_id": "1"}}'
     assert metadata.decode() == expected_output
 
 
 @pytest.mark.parametrize(
-    "index, doc_id, action, doc, expected_output",
+    'index, doc_id, action, doc, expected_output',
     [
         (
             'test_index',
             '1',
             Operation.CREATE,
             {'field': 'value'},
-            [{'create': {'_index': 'test_index', '_id': '1'}}, {'field': 'value'}],
+            b'{"create": {"_index": "test_index", "_id": "1"}}\n{"field": "value"}',
         ),
         (
             'test_index',
             '1',
             Operation.UPDATE,
             {'field': 'value'},
-            [{'update': {'_index': 'test_index', '_id': '1'}}, {'doc': {'field': 'value'}}],
+            b'{"update": {"_index": "test_index", "_id": "1"}}\n{"doc":{"field": "value"}}',
         ),
         (
             'test_index',
             '1',
             Operation.DELETE,
             None,
-            [{'delete': {'_index': 'test_index', '_id': '1'}}],
+            b'{"delete": {"_index": "test_index", "_id": "1"}}',
         ),
     ],
 )
 def test_bulk_doc_decode(index, doc_id, action, doc, expected_output):
     """Check that the `decode` method works as expected."""
+    doc = json.dumps(doc).encode() if doc is not None else None
     bulk_doc = BulkDoc(index=index, doc_id=doc_id, operation=action, doc=doc)
     assert bulk_doc.decode() == expected_output
 
@@ -96,11 +98,12 @@ def test_bulk_doc_delete():
 @pytest.mark.asyncio
 async def test_mixin_bulk():
     """Check that the `bulk` method works as expected."""
+
     class TestClient(MixinBulk):
         _client = AsyncMock()
 
     data = [
-        BulkDoc.create(index='test_index', doc_id='1', doc={'field': 'value'}),
+        BulkDoc.create(index='test_index', doc_id='1', doc=b'{"field": "value"}'),
         BulkDoc.delete(index='test_index', doc_id='2'),
     ]
 
@@ -108,10 +111,9 @@ async def test_mixin_bulk():
 
     await test_instance.bulk(data)
 
-    expected_bulk_docs = [
-        {'create': {'_index': 'test_index', '_id': '1'}},
-        {'field': 'value'},
-        {'delete': {'_index': 'test_index', '_id': '2'}},
-    ]
+    expected_bulk_docs = (
+        b'{"create": {"_index": "test_index", "_id": "1"}}\n{"field": "value"}\n'
+        + b'{"delete": {"_index": "test_index", "_id": "2"}}\n'
+    )
 
     test_instance._client.bulk.assert_called_once_with(expected_bulk_docs)

@@ -127,7 +127,9 @@ class Field:
     The name includes the whole parent group fields concatenade with dots
     """
 
-    def __init__(self, module: str, name: str, description: str, indexer_type: IndexerType, array: bool = False, indexer_details: dict = None):
+    def __init__(
+            self, module: str, name: str, description: str, indexer_type: IndexerType, array: bool = False,
+            indexer_details: dict = None):
         # Metadata
         self.module = module
         self.name = name
@@ -309,32 +311,6 @@ class FieldTree:
                 self._get_jmapping_rec(
                     properties[name]['properties'], child_node, child_name)
 
-    def _get_jlogpar_rec(self, jlogpar: dict, current: dict, full_name: str):
-        if self._field_tag in current:
-            field = current[self._field_tag]
-
-            # Not supported logpar parsers by default, we should explictly define an override for the following cases
-            arrays = field.array
-            objects = IndexerType.OBJECT == field.indexer_type
-            nested = IndexerType.NESTED == field.indexer_type
-
-            if not (arrays or objects or nested):
-                jlogpar[full_name] = str(field.indexer_type)
-
-                # Inspect childs only if object and not array
-                if objects and not arrays:
-                    if self._children_tag in current:
-                        for child_name, child_node in current[self._children_tag].items():
-                            self._get_jlogpar_rec(
-                                jlogpar, child_node, full_name + '.' + child_name)
-
-        else:
-            # Current is parent default object, inspect childs
-            if self._children_tag in current:
-                for child_name, child_node in current[self._children_tag].items():
-                    self._get_jlogpar_rec(
-                        jlogpar, child_node, full_name + '.' + child_name)
-
     def get_jschema(self) -> dict:
         jschema = dict()
 
@@ -360,24 +336,29 @@ class FieldTree:
         self._logpar_overrides = logpar_overrides
 
     def get_jlogpar(self) -> dict:
-        jlogpar = dict()
+        return self._logpar_overrides
 
-        for name, node in self._root[self._children_tag].items():
-            self._get_jlogpar_rec(jlogpar, node, name)
-
-        if self._logpar_overrides:
-            for k, v in self._logpar_overrides.items():
-                jlogpar[k] = v
-
-        return jlogpar
+    def _merge_dicts(self, dict1, dict2):
+        for key, value in dict2.items():
+            if key in dict1:
+                if isinstance(value, dict) and isinstance(dict1[key], dict):
+                    dict1[key] = self._merge_dicts(dict1[key], value)
+                else:
+                    dict1[key] = value
+            else:
+                dict1[key] = value
+        return dict1
 
     def merge(self, other: FieldTree):
         for k, v in other._root[self._children_tag].items():
             if self._has_field_node(k):
-                raise Exception(
-                    f'Error merging field tree, field {k} already exists')
-
-            self._root[self._children_tag][k] = v
+                if isinstance(self._root[self._children_tag].get(k), dict):
+                    self._root[self._children_tag][k] = self._merge_dicts(
+                        self._root[self._children_tag].get(k, {}),
+                        v
+                    )
+            else:
+                self._root[self._children_tag][k] = v
 
         for k, v in other._logpar_overrides.items():
             if k in self._logpar_overrides:

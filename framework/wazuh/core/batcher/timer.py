@@ -10,6 +10,7 @@ class TimerManager:
     max_time_seconds : int
         Maximum time in seconds before triggering the timeout event.
     """
+
     def __init__(self, max_time_seconds: int):
         self.max_time_seconds = max_time_seconds
         self._timeout_event = asyncio.Event()
@@ -20,7 +21,7 @@ class TimerManager:
         await asyncio.sleep(self.max_time_seconds)
         self._timeout_event.set()
 
-    def create_timer_task(self):
+    def start_timer(self):
         """Create an asynchronous task to start the event timer."""
         self._timeout_task = asyncio.create_task(self._event_timer())
 

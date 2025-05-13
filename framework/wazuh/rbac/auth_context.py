@@ -7,12 +7,12 @@ import re
 from collections import defaultdict
 from typing import Union
 
-from wazuh.rbac import orm
+from wazuh.core.indexer.models.rbac import Role
+from wazuh.core.rbac import RBACManager
 
 
 class RBAChecker:
-    """
-    The logical operations available in our system:
+    """The logical operations available in our system:
         AND: All the clauses that it encloses must be certain so that the operation is evaluated as certain.
         OR: At least one of the clauses it contains must be correct for the operator to be evaluated as True.
         NOT: The clause enclosed by the NOT operator must give False for it to be evaluated as True.
@@ -27,19 +27,28 @@ class RBAChecker:
         FIND: Recursively launches the MATCH function to search for all levels of authorization context, the
           operation is the same, if there is at least one occurrence, the function will return True
         FIND$: Just like the previous one, in this case the function MATCH$ is recursively executed.
-    Regex schema ----> "r'REGULAR_EXPRESSION', this is the wildcard for detecting regular expressions"
+    Regex schema ----> "r'REGULAR_EXPRESSION', this is the wildcard for detecting regular expressions".
     """
+
     _logical_operators = ['AND', 'OR', 'NOT']
     _functions = ['MATCH', 'MATCH$', 'FIND', 'FIND$']
     _initial_index_for_regex = 2
     _regex_prefix = "r'"
 
     # If we don't pass it the role to check, it will take all of the system.
-    def __init__(self, auth_context: Union[dict, str] = None, role: Union[list, orm.Roles] = None, user_id: int = None):
+    def __init__(
+        self,
+        rbac_manager: RBACManager,
+        auth_context: Union[dict, str] = None,
+        role: Union[list, Role] = None,
+        user_id: int = None,
+    ):
         """Class constructor to match the roles of the system with a given authorization context.
 
         Parameters
         ----------
+        rbac_manager : RBACManager
+            RBAC manager.
         auth_context : dict or str
             Authorization context to be checked.
         role : list or orm.Roles
@@ -55,25 +64,15 @@ class RBAChecker:
         except TypeError:
             self.authorization_context = auth_context
 
+        self.rbac_manager: RBACManager = rbac_manager
+
         if role is None:
             # All system's roles
-            with orm.RolesManager() as rm:
-                roles_list = list(map(orm.Roles.to_dict, rm.get_roles()))
+            roles_list = self.rbac_manager.get_roles()
         else:
             roles_list = [role] if not isinstance(role, list) else role
 
-        with orm.RolesManager() as rm:
-            with orm.RulesManager() as rum:
-                processed_roles_list = list()
-                for role in roles_list:
-                    rules = list()
-                    for rule in rm.get_role_id(role_id=role['id'])['rules']:
-                        rules.append(rum.get_rule(rule))
-                    if len(rules) > 0:
-                        processed_roles_list.append(role)
-                        processed_roles_list[-1]['rules'] = rules
-
-        self.roles_list = processed_roles_list
+        self.roles_list = roles_list
 
     def get_authorization_context(self) -> str:
         """Return the authorization context.
@@ -117,7 +116,7 @@ class RBAChecker:
         return role_chunk, auth_chunk
 
     def process_lists(self, role_chunk: list, auth_context: list, mode: str) -> int:
-        """Process lists of role chunks and authorization context chunks
+        """Process lists of role chunks and authorization context chunks.
 
         Parameters
         ----------
@@ -221,16 +220,17 @@ class RBAChecker:
             if not expression.startswith(self._regex_prefix):
                 return False
             try:
-                regex = ''.join(expression[self._initial_index_for_regex:-2])
+                regex = ''.join(expression[self._initial_index_for_regex : -2])
                 regex = re.compile(regex)
                 return regex
-            except:
+            except Exception:
                 return False
         return False
 
-    def match_item(self, role_chunk: Union[list, dict], auth_context: Union[list, dict] = None,
-                   mode: str = 'MATCH') -> Union[int, bool]:
-        """This function will go through all authorization contexts and system roles recursively until it finds the
+    def match_item(  # noqa: C901
+        self, role_chunk: Union[list, dict], auth_context: Union[list, dict] = None, mode: str = 'MATCH'
+    ) -> Union[int, bool]:
+        """Go through all authorization contexts and system roles recursively until it finds the
         structure indicated in role_chunk.
 
         Parameters
@@ -281,9 +281,10 @@ class RBAChecker:
 
         return False
 
-    def find_item(self, role_chunk: Union[list, dict], auth_context: dict = None, mode: str = 'FIND',
-                  role_id: int = None) -> bool:
-        """This function will use the match function and will launch it recursively on all the authorization context
+    def find_item(
+        self, role_chunk: Union[list, dict], auth_context: dict = None, mode: str = 'FIND', role_id: int = None
+    ) -> bool:
+        """Use the match function and will launch it recursively on all the authorization context
         tree, on all the levels.
 
         Parameters
@@ -323,8 +324,8 @@ class RBAChecker:
 
         return False
 
-    def check_rule(self, rule: dict, role_id: int = None) -> Union[bool, int]:
-        """This is the controller for the match of the roles with the authorization context,
+    def check_rule(self, rule: dict, role_id: int = None) -> Union[bool, int]:  # noqa: C901
+        """Control the match of the roles with the authorization context,
         this function is the one that will launch the others.
 
         Parameters
@@ -360,26 +361,25 @@ class RBAChecker:
 
         return False
 
-    def get_user_roles(self) -> list:
-        """This function will return a list of role IDs if these match with the authorization context.
+    def get_user_roles(self) -> list[Role]:
+        """Get a list of role IDs if these match with the authorization context.
 
         Returns
         -------
         list
             List or role IDs matching the auth context.
         """
-        list_roles = list()
+        list_roles = []
         for role in self.roles_list:
-            for rule in role['rules']:
-                # wazuh-wui has id 2
-                if (rule['id'] > orm.MAX_ID_RESERVED or self.user_id == 2) and self.check_rule(rule['rule']):
-                    list_roles.append(role['id'])
+            for rule in role.rules:
+                if self.check_rule(rule):
+                    list_roles.append(role.name)
                     break
 
         return list_roles
 
     def run_auth_context(self) -> defaultdict:
-        """This function will return the final policies of a user according to the roles matching the authorization
+        """Get the final policies of a user according to the roles matching the authorization
         context.
 
         Returns
@@ -389,54 +389,25 @@ class RBAChecker:
         """
         user_roles = self.get_user_roles()
         user_roles_policies = defaultdict(list)
-        with orm.RolesPoliciesManager() as rpm:
-            for role in user_roles:
-                for policy in rpm.get_all_policies_from_role(role):
-                    user_roles_policies['policies'].append(json.loads(policy.policy))
-                user_roles_policies['roles'].append(role)
+        for role in user_roles:
+            for policy in role.policies:
+                user_roles_policies['policies'].append(policy)
+            user_roles_policies['roles'].append(role)
 
         return user_roles_policies
 
-    def run_auth_context_roles(self) -> list:
-        """This function will return the roles of a user matching the authorization context.
+    def run_auth_context_roles(self) -> list[Role]:
+        """Get the roles of a user matching the authorization context.
 
         Returns
         -------
-        list
+        list[Role]
             List or role IDs matching the auth context.
         """
-        user_roles = self.get_user_roles()
+        return self.get_user_roles()
 
-        return user_roles
-
-    @staticmethod
-    def run_user_role_link(user_id: int) -> defaultdict:
-        """This function will return the final policies of a user according to its roles in the RBAC database.
-
-        Parameters
-        ----------
-        user_id : int
-            User to get the policies from.
-
-        Returns
-        -------
-        defaultdict
-            Final policies of a user according to its roles in the RBAC database.
-        """
-        with orm.UserRolesManager() as urm:
-            user_roles = list(role for role in urm.get_all_roles_from_user(user_id=user_id))
-        user_roles_policies = defaultdict(list)
-        with orm.RolesPoliciesManager() as rpm:
-            for role in user_roles:
-                for policy in rpm.get_all_policies_from_role(role_id=role.id):
-                    user_roles_policies['policies'].append(policy.to_dict()['policy'])
-                user_roles_policies['roles'].append(role.id)
-
-        return user_roles_policies
-
-    @staticmethod
-    def run_user_role_link_roles(user_id: int) -> list:
-        """This function will return the roles in the RBAC database for a user.
+    def run_user_role_link_roles(self, user_id: int) -> list[Role]:
+        """Get the roles for a user.
 
         Parameters
         ----------
@@ -445,32 +416,8 @@ class RBAChecker:
 
         Returns
         -------
-        list
+        list[Role]
             List of roles related to the user.
         """
-        with orm.UserRolesManager() as urm:
-            user_roles = list(role.id for role in urm.get_all_roles_from_user(user_id=user_id))
-
-        return user_roles
-
-
-def get_policies_from_roles(roles: list = None) -> list:
-    """This function will return the final policies of a user according to its roles.
-
-    Parameters
-    ----------
-    roles : list
-        List of roles.
-
-    Returns
-    -------
-    list
-        Policies of a user according to a list of roles.
-    """
-    policies = list()
-    with orm.RolesPoliciesManager() as rpm:
-        for role in roles:
-            for policy in rpm.get_all_policies_from_role(role):
-                policies.append(json.loads(policy.policy))
-
-    return policies
+        user = self.rbac_manager.get_user(user_id)
+        return user.roles

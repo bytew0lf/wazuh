@@ -111,7 +111,7 @@ void expectBuildPolicyOk(std::shared_ptr<builder::mocks::MockBuilder> mockbuilde
                          std::shared_ptr<builder::mocks::MockPolicy> mockPolicy)
 {
     // Build policy controller
-    EXPECT_CALL(*mockbuilder, buildPolicy(testing::_)).WillOnce(testing::Return(mockPolicy));
+    EXPECT_CALL(*mockbuilder, buildPolicy(testing::_, testing::_, testing::_)).WillOnce(testing::Return(mockPolicy));
     auto emptyNames = std::unordered_set<base::Name> {"asset/test/0"};
     EXPECT_CALL(*mockPolicy, assets()).WillRepeatedly(testing::ReturnRefOfCopy(emptyNames));
     auto emptyExpression = base::Expression {};
@@ -307,28 +307,6 @@ TEST_F(OrchestratorRouterTest, ChangePriorityBusy)
 
     EXPECT_TRUE(m_orchestrator->changeEntryPriority("route", 11).has_value());
     EXPECT_EQ(base::getResponse(m_orchestrator->getEntry("route")).priority(), 10);
-
-    m_orchestrator->stop();
-}
-
-TEST_F(OrchestratorRouterTest, PostStrEvent)
-{
-    router::prod::EntryPost entry("route", "policy/wazuh/0", "filter/allow-all/0", 10);
-
-    EXPECT_CALL(*m_mockStore, upsertInternalDoc(testing::_, testing::_)).WillRepeatedly(testing::Return(std::nullopt));
-
-    expectBuildPolicyOk(m_mockbuilder, m_mockPolicy);
-    m_orchestrator->postEntry(entry);
-
-    EXPECT_CALL(*m_mockController, stop()).Times(1);
-
-    auto times {10};
-    EXPECT_CALL(*m_mockQueueRouter, push(testing::_)).Times(times);
-
-    for (auto i = 0; i < times; i++)
-    {
-        EXPECT_FALSE(m_orchestrator->postStrEvent("1:any:message").has_value());
-    }
 
     m_orchestrator->stop();
 }

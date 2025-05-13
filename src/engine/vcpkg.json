@@ -1,7 +1,6 @@
 {
   "dependencies": [
     "benchmark",
-    "cli11",
     "concurrentqueue",
     "curl",
     "date",
@@ -10,7 +9,6 @@
     "fmt",
     "gtest",
     "libmaxminddb",
-    "libuv",
     "opentelemetry-cpp",
     "protobuf",
     "pugixml",
@@ -20,11 +18,11 @@
     "rxcpp",
     "spdlog",
     "taskflow",
-    "uvw",
     "yaml-cpp",
     "cpp-httplib",
     "liblzma",
-    "libarchive"
+    "libarchive",
+    "openssl"
   ],
   "overrides": [
     {
@@ -32,16 +30,12 @@
       "version": "1.8.5#0"
     },
     {
-      "name": "cli11",
-      "version": "2.2.0#0"
-    },
-    {
       "name": "concurrentqueue",
       "version": "1.0.4#0"
     },
     {
       "name": "curl",
-      "version": "8.9.1#0"
+      "version": "8.11.1#0"
     },
     {
       "name": "date",
@@ -66,10 +60,6 @@
     {
       "name": "libmaxminddb",
       "version": "1.9.1#0"
-    },
-    {
-      "name": "libuv",
-      "version": "1.48.0#0"
     },
     {
       "name": "opentelemetry-cpp",
@@ -108,10 +98,6 @@
       "version": "3.7.0#0"
     },
     {
-      "name": "uvw",
-      "version": "2.12.1#2"
-    },
-    {
       "name": "yaml-cpp",
       "version": "0.8.0#0"
     },
@@ -126,6 +112,10 @@
     {
       "name": "libarchive",
       "version": "3.7.7#0"
+    },
+    {
+      "name": "openssl",
+      "version": "3.4.0#0"
     }
   ]
 }

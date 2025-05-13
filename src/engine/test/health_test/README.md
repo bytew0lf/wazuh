@@ -129,6 +129,34 @@ To evaluate the mapping in all decoders and rules
 engine-health-test static -r ruleset_dir mapping_validate
 ```
 
+### Custom field documentation validate
+This tool validates that the fields defined in the custom_fields.yml file of each integration are correctly documented. It verifies that it is not empty, that it is not too short, that it does not have repeated words or letters and words usually used to fill fields.
+
+```bash
+usage: engine-health-test custom_field_documentation_validate [-h] -r RULESET [--integration INTEGRATION] [--rule_folder rule_folder]
+
+options:
+  -h, --help            show this help message and exit
+  --integration INTEGRATION
+                        Specify integration name
+  --rule_folder rule_folder
+                        Specify rule folder name
+```
+
+#### Use
+To evaluate a particular integration
+```bash
+engine-health-test static -r ruleset_dir custom_field_documentation_validate --integration windows
+```
+To evaluate  particular rule folder
+```bash
+engine-health-test static -r ruleset_dir custom_field_documentation_validate --rule_folder windows
+```
+To evaluate all decoders and rules
+```bash
+engine-health-test static -r ruleset_dir custom_field_documentation_validate
+```
+
 ### Event processing
 This tool validates that each asset in the ruleset has processed at least one event
 
@@ -142,6 +170,33 @@ options:
 #### Use
 ```bash
 engine-health-test static -r ruleset_dir event_processing_validate
+```
+
+### Non modifiables fields validate
+Validates non modifiables fields in integrations, decoders or rules If you do not specify a specific target,
+all assets will be validated. However, if you specify the target, only one is accepted
+
+```bash
+usage: engine-health-test ststic non_modifiable_fields_validate [-h] [--integration INTEGRATION] [--rule_folder RULE_FOLDER]
+                                                                  [--target TARGET] [--skip SKIP]
+
+options:
+  -h, --help            show this help message and exit
+  --integration INTEGRATION
+                        Specify integration name
+  --rule_folder RULE_FOLDER
+                        Specify the name of the rule folder to test
+
+```
+
+#### Usage
+```bash
+# To run a specific integration
+engine-health-test static -r ruleset_dir non_modifiable_fields_validate --integration windows
+# To run a specific rule folder
+engine-health-test static -r ruleset_dir non_modifiable_fields_validate --rule_folder windows
+# To run all tests in assets
+engine-health-test static -r ruleset_dir non_modifiable_fields_validate
 ```
 
 ## Running Dynamic Tests
@@ -227,25 +282,6 @@ options:
 engine-health-test dynamic -e health_test/environment load_decoders
 ```
 
-### Validate decoder mapping
-Verifies that only certain fields are mapped in the decoders.
-```bash
-usage: engine-health-test dynamic validate_decoder_mapping [-h] [--integration INTEGRATION] [--skip SKIP]
-
-options:
-  -h, --help            show this help message and exit
-  --integration INTEGRATION
-                        Specify the name of the integration to test, if not specified all integration will be tested
-  --skip SKIP           Skip the tests with the specified name
-```
-
-#### Use
-```bash
-# Validate specific integration
-engine-health-test dynamic -e health_test/environment validate_decoder_mapping --integration suricata
-# Validate all decoders
-engine-health-test dynamic -e health_test/environment validate_decoder_mapping
-```
 
 ### Load rules
 This tool load and add the rules to the policy.
@@ -288,25 +324,6 @@ engine-health-test dynamic -e health_test/environment validate_successful_assets
 engine-health-test dynamic -e health_test/environment validate_successful_assets --target rule
 # Validate all decoders
 engine-health-test dynamic -e health_test/environment validate_successful_assets --target decoder
-```
-
-### Validate rule mapping
-Verifies that only certain fields are meped in the rules.
-```bash
-usage: engine-health-test dynamic -e health_test/environment validate_rule_mapping [-h] [--rule_folder rule_folder] [--skip SKIP]
-
-options:
-  -h, --help            show this help message and exit
-  --rule_folder rule_folder
-                        Specify the name of the rule folder to test, if not specified all rules folder will be tested
-  --skip SKIP           Skip the tests with the specified name
-```
-#### Usage
-```bash
-# Validate specific rule folder
-engine-health-test dynamic -e health_test/environment validate_rule_mapping --rule_folder windows
-# Validate all rules
-engine-health-test dynamic -e health_test/environment validate_rule_mapping
 ```
 
 ### Validate event indexing
@@ -375,6 +392,7 @@ engine-health-test dynamic -e health_test/environment vvalidate_custom_field_ind
 engine-health-test dynamic -e health_test/environment validate_custom_field_indexing --target decoder --skip windows,wazuh-core
 ```
 
+
 ### Run
 This tool injects events into the engine and evaluates the output events with an expected event
 ```bash
@@ -402,6 +420,43 @@ engine-health-test dynamic -e health_test/environment run --target decoder
 engine-health-test dynamic -e health_test/environment run --target rules
 # To skip specific tests in decoders
 engine-health-test dynamic -e health_test/environment run --target decoder --skip windows,wazuh-core
+```
+
+### Run all
+This command runs all the health suite tests. To do this, you must first build the environment with setupEnvironment.py.
+To run this command a second time, you must delete and recreate the environment, as assets and databases are loaded during execution.
+```bash
+usage: engine-health-test run_all [-h] -e ENVIRONMENT -r RULESET -t TEST_DIR
+
+options:
+  -h, --help            show this help message and exit
+  -e ENVIRONMENT, --environment ENVIRONMENT
+                        Environment to run the tests in
+  -r RULESET, --ruleset RULESET
+                        Specify the path to the ruleset directory
+  -t TEST_DIR, --test-dir TEST_DIR
+                        Specify the path to the test directory
+```
+
+#### Usage
+```bash
+engine-health-test run_all -e health_test/environment -r ruleset -t health_test_directory
+```
+
+### Coverage report
+A tool that measures the percentage of coverage of an asset.
+with a detailed report on the successful and failed traces for each stage of the asset.
+```bash
+usage: engine-health-test dynamic -e health_test/environment coverage_validate [-h] [-i INTEGRATION] [--rule_folder rule_folder] [--skip SKIP] --target TARGET
+
+options:
+  -h, --help            show this help message and exit
+  -i INTEGRATION, --integration INTEGRATION
+                        Specify the name of the integration to test
+  --rule_folder rule_folder
+                        Specify the name of the rule folder to test
+  --skip SKIP           Skip the tests with the specified name
+  --target TARGET       Specify the asset type (decoder or rule). If it is a decoder, the tests are carried out for all decoders. The same for the rules.
 ```
 
 ## Error Handling and Reports

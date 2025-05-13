@@ -7,21 +7,17 @@
 #include <thread>
 #include <vector>
 
-#include <api/api.hpp>
+#include <api/archiver/handlers.hpp>
 #include <api/catalog/catalog.hpp>
-#include <api/catalog/handlers.hpp>
-#include <api/geo/handlers.hpp>
-#include <api/graph/handlers.hpp>
-#include <api/kvdb/handlers.hpp>
-#include <api/metrics/handlers.hpp>
-#include <api/policy/handlers.hpp>
+#include <api/event/ndJsonParser.hpp>
+#include <api/handlers.hpp>
 #include <api/policy/policy.hpp>
-#include <api/router/handlers.hpp>
-#include <api/tester/handlers.hpp>
-#include <apiserver/apiServer.hpp>
+#include <archiver/archiver.hpp>
 #include <base/logging.hpp>
-#include <base/parseEvent.hpp>
+#include <base/utils/singletonLocator.hpp>
+#include <base/utils/singletonLocatorStrategies.hpp>
 #include <bk/rx/controller.hpp>
+#include <builder/allowedFields.hpp>
 #include <builder/builder.hpp>
 #include <conf/conf.hpp>
 #include <conf/keys.hpp>
@@ -29,24 +25,19 @@
 #include <eMessages/eMessage.h>
 #include <geo/downloader.hpp>
 #include <geo/manager.hpp>
+#include <httpsrv/server.hpp>
 #include <indexerConnector/indexerConnector.hpp>
 #include <kvdb/kvdbManager.hpp>
 #include <logpar/logpar.hpp>
 #include <logpar/registerParsers.hpp>
-#include <metrics/metricsManager.hpp>
+#include <metrics/manager.hpp>
 #include <queue/concurrentQueue.hpp>
 #include <rbac/rbac.hpp>
 #include <router/orchestrator.hpp>
 #include <schemf/schema.hpp>
-#include <server/endpoints/unixDatagram.hpp>
-#include <server/endpoints/unixStream.hpp>
-#include <server/engineServer.hpp>
-#include <server/protocolHandlers/wStream.hpp>
-#include <sockiface/unixSocketFactory.hpp>
 #include <store/drivers/fileDriver.hpp>
 #include <store/store.hpp>
 #include <vdscanner/scanOrchestrator.hpp>
-#include <wdb/wdbManager.hpp>
 
 #include "base/utils/getExceptionStack.hpp"
 #include "stackExecutor.hpp"
@@ -60,21 +51,13 @@ struct QueueTraits : public moodycamel::ConcurrentQueueDefaultTraits
 };
 } // namespace
 
-std::shared_ptr<engineserver::EngineServer> g_engineServer {};
-std::shared_ptr<apiserver::ApiServer> g_apiServer {};
+std::shared_ptr<httpsrv::Server> g_engineServer {};
 
 void sigintHandler(const int signum)
 {
     if (g_engineServer)
     {
-        g_engineServer->request_stop();
         g_engineServer.reset();
-    }
-
-    if (g_apiServer)
-    {
-        g_apiServer->stop();
-        g_apiServer.reset();
     }
 }
 
@@ -126,28 +109,23 @@ int main(int argc, char* argv[])
     }
 
     // Init modules
-    std::shared_ptr<api::Api> api;
-    std::shared_ptr<engineserver::EngineServer> server;
     std::shared_ptr<store::Store> store;
     std::shared_ptr<builder::Builder> builder;
     std::shared_ptr<api::catalog::Catalog> catalog;
     std::shared_ptr<router::Orchestrator> orchestrator;
     std::shared_ptr<hlp::logpar::Logpar> logpar;
     std::shared_ptr<kvdbManager::KVDBManager> kvdbManager;
-    std::shared_ptr<metricsManager::MetricsManager> metrics;
     std::shared_ptr<geo::Manager> geoManager;
     std::shared_ptr<schemf::Schema> schema;
-    std::shared_ptr<sockiface::UnixSocketFactory> sockFactory;
-    std::shared_ptr<wazuhdb::WDBManager> wdbManager;
     std::shared_ptr<rbac::RBAC> rbac;
     std::shared_ptr<api::policy::IPolicy> policyManager;
     std::shared_ptr<vdscanner::ScanOrchestrator> vdScanner;
     std::shared_ptr<IIndexerConnector> iConnector;
+    std::shared_ptr<httpsrv::Server> apiServer;
+    std::shared_ptr<archiver::Archiver> archiver;
 
     try
     {
-        metrics = std::make_shared<metricsManager::MetricsManager>();
-
         // Set new log level if it is different from the default
         {
             const auto level = logging::strToLevel(confManager.get<std::string>(conf::key::LOGGING_LEVEL));
@@ -157,6 +135,72 @@ int main(int argc, char* argv[])
                 logging::setLevel(level);
                 LOG_DEBUG("Changed log level to '{}'", logging::levelToStr(level));
             }
+        }
+
+        // Metrics
+        {
+            SingletonLocator::registerManager<metrics::IManager,
+                                              base::PtrSingleton<metrics::IManager, metrics::Manager>>();
+            auto config = std::make_shared<metrics::Manager::ImplConfig>();
+            config->logLevel = logging::Level::Err;
+            config->exportInterval =
+                std::chrono::milliseconds(confManager.get<int64_t>(conf::key::METRICS_EXPORT_INTERVAL));
+            config->exportTimeout =
+                std::chrono::milliseconds(confManager.get<int64_t>(conf::key::METRICS_EXPORT_TIMEOUT));
+
+            // TODO Update index configuration when it is defined
+            IndexerConnectorOptions icConfig {};
+            icConfig.name = "metrics-index";
+            icConfig.hosts = confManager.get<std::vector<std::string>>(conf::key::INDEXER_HOST);
+            icConfig.username = confManager.get<std::string>(conf::key::INDEXER_USER);
+            icConfig.password = confManager.get<std::string>(conf::key::INDEXER_PASSWORD);
+            if (confManager.get<bool>(conf::key::INDEXER_SSL_USE_SSL))
+            {
+                icConfig.sslOptions.cacert = confManager.get<std::string>(conf::key::INDEXER_SSL_CA_BUNDLE);
+                icConfig.sslOptions.cert = confManager.get<std::string>(conf::key::INDEXER_SSL_CERTIFICATE);
+                icConfig.sslOptions.key = confManager.get<std::string>(conf::key::INDEXER_SSL_KEY);
+            }
+
+            icConfig.databasePath = confManager.get<std::string>(conf::key::INDEXER_DB_PATH);
+            const auto to = confManager.get<int>(conf::key::INDEXER_TIMEOUT);
+            if (to < 0)
+            {
+                throw std::runtime_error("Invalid indexer timeout value.");
+            }
+            icConfig.timeout = to;
+            const auto wt = confManager.get<int>(conf::key::INDEXER_THREADS);
+            if (wt < 0)
+            {
+                throw std::runtime_error("Invalid indexer threads value.");
+            }
+            icConfig.workingThreads = wt;
+
+            config->indexerConnectorFactory = [icConfig]() -> std::shared_ptr<IIndexerConnector>
+            {
+                return std::make_shared<IndexerConnector>(icConfig);
+            };
+
+            SingletonLocator::instance<metrics::IManager>().configure(config);
+
+            LOG_INFO("Metrics initialized.");
+
+            if (confManager.get<bool>(conf::key::METRICS_ENABLED))
+            {
+                SingletonLocator::instance<metrics::IManager>().enable();
+                LOG_INFO("Metrics enabled.");
+            }
+            else
+            {
+                SingletonLocator::instance<metrics::IManager>().disable();
+                LOG_INFO("Metrics disabled.");
+            }
+
+            exitHandler.add(
+                []()
+                {
+                    SingletonLocator::instance<metrics::IManager>().disable();
+                    SingletonLocator::clear();
+                });
         }
 
         // Store
@@ -176,7 +220,7 @@ int main(int argc, char* argv[])
         // KVDB
         {
             kvdbManager::KVDBManagerOptions kvdbOptions {confManager.get<std::string>(conf::key::KVDB_PATH), "kvdb"};
-            kvdbManager = std::make_shared<kvdbManager::KVDBManager>(kvdbOptions, metrics);
+            kvdbManager = std::make_shared<kvdbManager::KVDBManager>(kvdbOptions);
             kvdbManager->initialize();
             LOG_INFO("KVDB initialized.");
             exitHandler.add(
@@ -217,16 +261,16 @@ int main(int argc, char* argv[])
             hlp::initTZDB(confManager.get<std::string>(conf::key::TZDB_PATH),
                           confManager.get<bool>(conf::key::TZDB_AUTO_UPDATE));
 
-            base::Name hlpConfigFileName({"schema", "wazuh-logpar-types", "0"});
-            auto hlpParsers = store->readInternalDoc(hlpConfigFileName);
-            if (std::holds_alternative<base::Error>(hlpParsers))
+            base::Name logparFieldOverrides({"schema", "wazuh-logpar-overrides", "0"});
+            auto res = store->readInternalDoc(logparFieldOverrides);
+            if (std::holds_alternative<base::Error>(res))
             {
-                throw std::runtime_error(fmt::format("Could not retreive configuration file [{}] needed by the "
+                throw std::runtime_error(fmt::format("Could not retreive logpar field overrides [{}] needed by the "
                                                      "HLP module, error: {}",
-                                                     hlpConfigFileName.fullName(),
-                                                     std::get<base::Error>(hlpParsers).message));
+                                                     logparFieldOverrides.fullName(),
+                                                     base::getError(res).message));
             }
-            logpar = std::make_shared<hlp::logpar::Logpar>(std::get<json::Json>(hlpParsers), schema);
+            logpar = std::make_shared<hlp::logpar::Logpar>(base::getResponse<store::Doc>(res), schema);
             hlp::registerParsers(logpar);
             LOG_INFO("HLP initialized.");
         }
@@ -240,9 +284,24 @@ int main(int argc, char* argv[])
             icConfig.password = confManager.get<std::string>(conf::key::INDEXER_PASSWORD);
             if (confManager.get<bool>(conf::key::INDEXER_SSL_USE_SSL))
             {
-                icConfig.sslOptions.cacert = confManager.get<std::vector<std::string>>(conf::key::INDEXER_SSL_CA_LIST);
+                icConfig.sslOptions.cacert = confManager.get<std::string>(conf::key::INDEXER_SSL_CA_BUNDLE);
                 icConfig.sslOptions.cert = confManager.get<std::string>(conf::key::INDEXER_SSL_CERTIFICATE);
                 icConfig.sslOptions.key = confManager.get<std::string>(conf::key::INDEXER_SSL_KEY);
+                icConfig.sslOptions.skipVerifyPeer = !confManager.get<bool>(conf::key::INDEXER_SSL_VERIFY_CERTS);
+            }
+            else
+            {
+                // If not use SSL, check if url start with https
+                for (const auto& host : icConfig.hosts)
+                {
+                    if (base::utils::string::startsWith(host, "https://"))
+                    {
+                        throw std::runtime_error(fmt::format(
+                            "The host '{}' for indexer connector is using HTTPS but the SSL options are not "
+                            "enabled.",
+                            host));
+                    }
+                }
             }
 
             icConfig.databasePath = confManager.get<std::string>(conf::key::INDEXER_DB_PATH);
@@ -270,13 +329,28 @@ int main(int argc, char* argv[])
             builderDeps.logpar = logpar;
             builderDeps.kvdbScopeName = "builder";
             builderDeps.kvdbManager = kvdbManager;
-            builderDeps.sockFactory = std::make_shared<sockiface::UnixSocketFactory>();
-            builderDeps.wdbManager =
-                std::make_shared<wazuhdb::WDBManager>(std::string(wazuhdb::WDB_SOCK_PATH), builderDeps.sockFactory);
             builderDeps.geoManager = geoManager;
             builderDeps.iConnector = iConnector;
             auto defs = std::make_shared<defs::DefinitionsBuilder>();
-            builder = std::make_shared<builder::Builder>(store, schema, defs, builderDeps);
+
+            // Build allowed fields
+            std::shared_ptr<builder::IAllowedFields> allowedFields;
+            auto allowedFieldsDoc = store->readInternalDoc("schema/allowed-fields/0");
+            if (std::holds_alternative<base::Error>(allowedFieldsDoc))
+            {
+                LOG_DEBUG("Could not load 'schema/allowed-fields/0' document, {}",
+                          std::get<base::Error>(allowedFieldsDoc).message);
+                LOG_WARNING("Allowed fields not found, assets will not have restrictions.");
+
+                allowedFields = std::make_shared<builder::AllowedFields>();
+            }
+            else
+            {
+                allowedFields =
+                    std::make_shared<builder::AllowedFields>(base::getResponse<store::Doc>(allowedFieldsDoc));
+            }
+
+            builder = std::make_shared<builder::Builder>(store, schema, defs, allowedFields, builderDeps);
             LOG_INFO("Builder initialized.");
         }
 
@@ -303,12 +377,9 @@ int main(int argc, char* argv[])
             std::shared_ptr<QEventType> eventQueue {};
             std::shared_ptr<QTestType> testQueue {};
             {
-                auto scope = metrics->getMetricsScope("EventQueue");
-                auto scopeDelta = metrics->getMetricsScope("EventQueueDelta");
                 // TODO queueFloodFile, queueFloodAttempts, queueFloodSleep -> Move to Queue.flood options
                 eventQueue = std::make_shared<QEventType>(confManager.get<int>(conf::key::QUEUE_SIZE),
-                                                          scope,
-                                                          scopeDelta,
+                                                          "routerEventQueue",
                                                           confManager.get<std::string>(conf::key::QUEUE_FLOOD_FILE),
                                                           confManager.get<int>(conf::key::QUEUE_FLOOD_ATTEMPS),
                                                           confManager.get<int>(conf::key::QUEUE_FLOOD_SLEEP),
@@ -317,9 +388,7 @@ int main(int argc, char* argv[])
             }
 
             {
-                auto scope = metrics->getMetricsScope("TestQueue");
-                auto scopeDelta = metrics->getMetricsScope("TestQueueDelta");
-                testQueue = std::make_shared<QTestType>(confManager.get<int>(conf::key::QUEUE_SIZE), scope, scopeDelta);
+                testQueue = std::make_shared<QTestType>(confManager.get<int>(conf::key::QUEUE_SIZE), "routerTestQueue");
                 LOG_DEBUG("Test queue created.");
             }
 
@@ -338,67 +407,55 @@ int main(int argc, char* argv[])
             LOG_INFO("Router initialized.");
         }
 
-        // Create and configure the api endpints
-        {
-            // API
-            api = std::make_shared<api::Api>(rbac);
-            LOG_DEBUG("API created.");
-            exitHandler.add(
-                [api, functionName = logging::getLambdaName(__FUNCTION__, "exitHandler")]()
-                {
-                    eMessage::ShutdownEMessageLibrary();
-                    LOG_INFO_L(functionName.c_str(), "API terminated.");
-                });
-
-            // Register Metrics
-            api::metrics::handlers::registerHandlers(metrics, api);
-            LOG_DEBUG("Metrics API registered.");
-
-            // KVDB
-            api::kvdb::handlers::registerHandlers(kvdbManager, "api", api);
-            LOG_DEBUG("KVDB API registered.");
-
-            // Catalog
-            api::catalog::handlers::registerHandlers(catalog, api);
-            LOG_DEBUG("Catalog API registered.");
-
-            // Policy
-            {
-                api::policy::handlers::registerHandlers(policyManager, api);
-                exitHandler.add([functionName = logging::getLambdaName(__FUNCTION__, "exitHandler")]()
-                                { LOG_DEBUG_L(functionName.c_str(), "Policy API terminated."); });
-                LOG_DEBUG("Policy API registered.");
-            }
-
-            // Router
-            api::router::handlers::registerHandlers(orchestrator, policyManager, api);
-            LOG_DEBUG("Router API registered.");
-
-            // Graph
-            {
-                // Register the Graph command
-                api::graph::handlers::Config graphConfig {builder};
-                api::graph::handlers::registerHandlers(graphConfig, api);
-                LOG_DEBUG("Graph API registered.");
-            }
-
-            // Tester
-            api::tester::handlers::registerHandlers(orchestrator, store, policyManager, api);
-            LOG_DEBUG("Tester API registered.");
-
-            // Geo
-            api::geo::handlers::registerHandlers(geoManager, api);
-            LOG_DEBUG("Geo API registered.");
-        }
-
         // VD Scanner
         {
             vdScanner = std::make_shared<vdscanner::ScanOrchestrator>();
         }
 
-        // API Server
+        // Archiver
         {
-            g_apiServer = std::make_shared<apiserver::ApiServer>();
+            archiver = std::make_shared<archiver::Archiver>(confManager.get<std::string>(conf::key::ARCHIVER_PATH),
+                                                            confManager.get<bool>(conf::key::ARCHIVER_ENABLED));
+            LOG_INFO("Archiver initialized.");
+        }
+
+        // Create and configure the api endpints
+        {
+            apiServer = std::make_shared<httpsrv::Server>("API_SRV");
+
+            // API
+            exitHandler.add(
+                [apiServer]()
+                {
+                    apiServer->stop();
+                    eMessage::ShutdownEMessageLibrary();
+                });
+
+            // TODO Add Metrics API registration
+
+            // Catalog
+            api::catalog::handlers::registerHandlers(catalog, apiServer);
+            LOG_DEBUG("Catalog API registered.");
+
+            // Geo
+            api::geo::handlers::registerHandlers(geoManager, apiServer);
+            LOG_DEBUG("Geo API registered.");
+
+            // KVDB
+            api::kvdb::handlers::registerHandlers(kvdbManager, apiServer);
+            LOG_DEBUG("KVDB API registered.");
+
+            // Policy
+            api::policy::handlers::registerHandlers(policyManager, apiServer);
+            LOG_DEBUG("Policy API registered.");
+
+            // Router
+            api::router::handlers::registerHandlers(orchestrator, policyManager, apiServer);
+            LOG_DEBUG("Router API registered.");
+
+            // Tester
+            api::tester::handlers::registerHandlers(orchestrator, store, policyManager, apiServer);
+            LOG_DEBUG("Tester API registered.");
 
             // Add apidoc documentation.
             /**
@@ -552,129 +609,30 @@ int main(int argc, char* argv[])
              *   "code": 503
              *  }
              */
-            g_apiServer->addRoute(apiserver::Method::POST,
-                                  "/vulnerability/scan",
-                                  [vdScanner](const auto& req, auto& res)
-                                  {
-                                      vdScanner->processEvent(req.body, res.body);
-                                      res.set_header("Content-Type", "application/json");
-                                  });
+            apiServer->addRoute(httpsrv::Method::POST,
+                                "/vulnerability/scan",
+                                [vdScanner](const auto& req, auto& res)
+                                {
+                                    vdScanner->processEvent(req.body, res.body);
+                                    res.set_header("Content-Type", "application/json");
+                                });
+            LOG_DEBUG("VD API endpoint registered.");
 
-            LOG_DEBUG("API Server configured.");
+            // Archiver
+            api::archiver::handlers::registerHandlers(archiver, apiServer);
+            LOG_DEBUG("Archiver API registered.");
 
-            // clang-format off
-            /**
-             * @api {post} /events/stateless Receive Events for Security Policy Processing
-             * @apiName ReceiveEvents
-             * @apiGroup Events
-             * @apiVersion 0.1.1-alpha
-             *
-             * @apiDescription This endpoint receives events to be processed by the Wazuh-Engine security policy. It
-             * accepts a NDJSON payload where each line represents an object.
-             * @apiHeader {String} Content-Type=application/x-ndjson The content type of the request.
-             *
-             * @apiBody (Agent Information) {Object} agent Agent information.
-             * @apiBody (Agent Information) {String} agent.id Unique identifier for the agent.
-             * @apiBody (Agent Information) {String} agent.name Name of the agent.
-             * @apiBody (Agent Information) {String} agent.type Type of agent, e.g., "endpoint".
-             * @apiBody (Agent Information) {String} agent.version Version of the agent software.
-             * @apiBody (Agent Information) {Array} agent.groups Array of groups the agent belongs to. (e.g ["group1", "group2"])
-             * @apiBody (Agent Information) {Object} agent.host Host information.
-             * @apiBody (Agent Information) {String} agent.host.hostname Hostname of the agent.
-             * @apiBody (Agent Information) {Object} agent.host.os Operating system information.
-             * @apiBody (Agent Information) {String} agent.host.os.name Operating system name, e.g., "Amazon Linux 2".
-             * @apiBody (Agent Information) {String} agent.host.os.plataform Operating system platform, e.g., "Linux".
-             * @apiBody (Agent Information) {Array} agent.host.ip Array of IP addresses of the agent. (e.g ["192.168.1.2"])
-             * @apiBody (Agent Information) {String} agent.host.architecture Architecture of the agent, e.g., "x86_64".
-             *
-             * @apiBody (Module Information) {Object} module Module information.
-             * @apiBody (Module Information) {String} module.module Name of the module, e.g., "logcollector" or "inventory".
-             * @apiBody (Module Information) {String} module.type Type of module, e.g., "file" or "package".
-             *
-             * @apiBody (Log Information) {Object} log Log information.
-             * @apiBody (Log Information) {Object} log.file File information.
-             * @apiBody (Log Information) {String} log.file.path Path to the file, "/path/to/source". Exist only if is recolected from a file.
-             * @apiBody (Log Information) {Object} base The base field set contains all fields which are at the root of the events.
-             * @apiBody (Log Information) {String} base.tags List of keywords used to tag each event. (e.g ["production", "env2"])
-             * @apiBody (Log Information) {Object} event Details of the event itself.
-             * @apiBody (Log Information) {String} event.original The original message collected from the agent.
-             * @apiBody (Log Information) {String} event.created Timestamp when an event is recollected in '%Y-%m-%dT%H:%M:%SZ' format.
-             * @apiBody (Log Information) {String} event.module Name of the module this data is coming from. (e.g. apache, eventchannel,
-             * journald, etc)
-             * @apiBody (Log Information) {String} event.provider Source of the event. (e.g channel, file, journald unit, etc)
-             *
-             * @apiExample {ndjson} Request-Example:
-             *     {"agent":{"id":"2887e1cf-9bf2-431a-b066-a46860080f56","name":"javier","type":"endpoint","version":"5.0.0","groups":["group1","group2"],"host":{"hostname":"myhost","os":{"name":"Amazon Linux 2","platform":"Linux"},"ip":["192.168.1.2"],"architecture":"x86_64"}}}
-             *     {"module": "logcollector", "type": "file"}
-             *     {"log": {"file": {"path": "/var/log/apache2/access.log"}}, "base": {"tags": ["production-server"]}, "event": {"original": "::1 - - [26/Jun/2020:16:16:29 +0200] \"GET /favicon.ico HTTP/1.1\" 404 209", "ingested": "2023-12-26T09:22:14.000Z", "module": "apache-access", "provider": "file"}}
-             *     {"module": "inventory", "type": "package"}
-             *     {"base": {"tags": ["string"]}, "event": {"original": "string", "ingested": "string", "module": "string", "provider": "string"}}
-             *
-             * @apiSuccessExample Success-Response:
-             *     HTTP/1.1 204 No Content
-             *    {}
-             *
-             * @apiError BadRequest The request body is not a valid JSON.
-             *
-             * @apiErrorExample {json} Error-Response:
-             *     HTTP/1.1 400 Bad Request
-             *     {
-             *       "error": ["Service Unavailable"],
-             *       "code": 400
-             *     }
-             */
-            // clang-format on
-            g_apiServer->addRoute(apiserver::Method::POST,
-                                  "/events/stateless",
-                                  [orchestrator](const auto& req, auto& res)
-                                  {
-                                      try
-                                      {
-                                          orchestrator->postRawNdjson(std::string(req.body));
-                                          res.status = httplib::StatusCode::NoContent_204;
-                                      }
-                                      catch (const std::runtime_error& e)
-                                      {
-                                          res.status = httplib::StatusCode::BadRequest_400;
-                                      }
-                                  });
+            // Finally start the API server
+            apiServer->start(confManager.get<std::string>(conf::key::SERVER_API_SOCKET));
         }
 
         // Server
         {
-            using namespace engineserver;
-            server = std::make_shared<EngineServer>(confManager.get<int>(conf::key::SERVER_THREAD_POOL_SIZE));
-            g_engineServer = server;
-
-            // API Endpoint
-            auto apiMetricScope = metrics->getMetricsScope("endpointAPI");
-            auto apiMetricScopeDelta = metrics->getMetricsScope("endpointAPIRate", true);
-            auto apiHandler = std::bind(&api::Api::processRequest, api, std::placeholders::_1, std::placeholders::_2);
-            auto apiClientFactory = std::make_shared<ph::WStreamFactory>(apiHandler); // API endpoint
-            apiClientFactory->setErrorResponse(base::utils::wazuhProtocol::WazuhResponse::unknownError().toString());
-            apiClientFactory->setBusyResponse(base::utils::wazuhProtocol::WazuhResponse::busyServer().toString());
-
-            auto apiEndpointCfg =
-                std::make_shared<endpoint::UnixStream>(confManager.get<std::string>(conf::key::SERVER_API_SOCKET),
-                                                       apiClientFactory,
-                                                       apiMetricScope,
-                                                       apiMetricScopeDelta,
-                                                       confManager.get<int>(conf::key::SERVER_API_QUEUE_SIZE),
-                                                       confManager.get<int>(conf::key::SERVER_API_TIMEOUT));
-            server->addEndpoint("API", apiEndpointCfg);
-
-            // Event Endpoint
-            auto eventMetricScope = metrics->getMetricsScope("endpointEvent");
-            auto eventMetricScopeDelta = metrics->getMetricsScope("endpointEventRate", true);
-            auto eventHandler = std::bind(&router::Orchestrator::pushEvent, orchestrator, std::placeholders::_1);
-            auto eventEndpointCfg =
-                std::make_shared<endpoint::UnixDatagram>(confManager.get<std::string>(conf::key::SERVER_EVENT_SOCKET),
-                                                         eventHandler,
-                                                         eventMetricScope,
-                                                         eventMetricScopeDelta,
-                                                         confManager.get<int>(conf::key::SERVER_EVENT_QUEUE_SIZE));
-            server->addEndpoint("EVENT", eventEndpointCfg);
-            LOG_DEBUG("Server configured.");
+            g_engineServer = std::make_shared<httpsrv::Server>("EVENT_SRV");
+            g_engineServer->addRoute(
+                httpsrv::Method::POST,
+                "/events/stateless",
+                api::event::handlers::pushEvent(orchestrator, api::event::protocol::getNDJsonParser(), archiver));
         }
     }
     catch (const std::exception& e)
@@ -688,12 +646,14 @@ int main(int argc, char* argv[])
     // Start server
     try
     {
-        g_apiServer->start(confManager.get<std::string>(conf::key::API_SERVER_SOCKET));
-        server->start();
+        g_engineServer->start(confManager.get<std::string>(conf::key::SERVER_EVENT_SOCKET),
+                              false); // Start in this thread
     }
     catch (const std::exception& e)
     {
         LOG_ERROR("An error occurred while running the server: {}.", utils::getExceptionStack(e));
     }
+
+    // Clean exit
     exitHandler.execute();
 }

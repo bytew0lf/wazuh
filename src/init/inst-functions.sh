@@ -24,30 +24,18 @@ GenerateService()
 
 InstallCommon()
 {
-  WAZUH_GROUP='wazuh'
-  WAZUH_USER='wazuh'
+  WAZUH_GROUP='wazuh-server'
+  WAZUH_USER='wazuh-server'
   INSTALL="install"
-  WAZUH_CONTROL_SRC='./init/wazuh-server.sh'
 
   ./init/adduser.sh ${WAZUH_USER} ${WAZUH_GROUP} ${INSTALLDIR}
-
-  # Folder for the engine api socket
-  ${INSTALL} -d -m 0750 -o ${WAZUH_USER} -g ${WAZUH_GROUP} ${INSTALLDIR}run/wazuh-engine
-  # Folder for persistent databases (vulnerability scanner, ruleset, connector).
-  ${INSTALL} -d -m 0660 -o ${WAZUH_USER} -g ${WAZUH_GROUP} ${INSTALLDIR}var/lib/wazuh-engine
-  # Folder for persistent databases (vulnerability scanner).
-  ${INSTALL} -d -m 0660 -o ${WAZUH_USER} -g ${WAZUH_GROUP} ${INSTALLDIR}var/lib/wazuh-engine/vd
-  # Folder for persistent databases (ruleset).
-  ${INSTALL} -d -m 0660 -o ${WAZUH_USER} -g ${WAZUH_GROUP} ${INSTALLDIR}var/lib/wazuh-engine/ruleset
-  # Folder for persistent queues for the indexer connector.
-  ${INSTALL} -d -m 0660 -o ${WAZUH_USER} -g ${WAZUH_GROUP} ${INSTALLDIR}var/lib/wazuh-engine/indexer-connector
-
 }
 
 InstallPython()
 {
+    ARCH=$(uname -m)
     PYTHON_VERSION='3.10.15'
-    PYTHON_FILENAME='python.tar.gz'
+    PYTHON_FILENAME="python_${ARCH}.tar.gz"
     PYTHON_INSTALLDIR=${INSTALLDIR}usr/share/wazuh-server/framework/python/
     PYTHON_FULL_PATH=${PYTHON_INSTALLDIR}$PYTHON_FILENAME
 
@@ -76,17 +64,20 @@ InstallPythonDependencies()
 InstallServer()
 {
     PYTHON_BIN_PATH=${INSTALLDIR}usr/share/wazuh-server/framework/python/bin/python3
+    SHARE_INSTALLDIR="/usr/share/wazuh-server"
 
-    ${MAKEBIN} --quiet -C ../framework install INSTALLDIR=/usr/share/wazuh-server
+    ${MAKEBIN} --quiet -C ../framework install ${SHARE_INSTALLDIR}
     ${PYTHON_BIN_PATH} -m pip install ../framework/
 
     ## Install Server management API
-    ${MAKEBIN} --quiet -C ../api install INSTALLDIR=/usr/share/wazuh-server
-    ${PYTHON_BIN_PATH} -m pip install ../api/
+    ${MAKEBIN} --quiet -C ../apis/server_management install ${SHARE_INSTALLDIR}
+    ${PYTHON_BIN_PATH} -m pip install ../apis/server_management
 
     ## Install Communications API
-    ${MAKEBIN} --quiet -C ../apis/comms_api install INSTALLDIR=/usr/share/wazuh-server
-    ${PYTHON_BIN_PATH} -m pip install ../apis/
+    ${MAKEBIN} --quiet -C ../apis/communications install ${SHARE_INSTALLDIR}
+    ${PYTHON_BIN_PATH} -m pip install ../apis/communications
+
+    ${INSTALL} -m 440 -o ${WAZUH_USER} -g ${WAZUH_GROUP} ../VERSION.json ${SHARE_INSTALLDIR}/VERSION.json
 
 }
 
@@ -105,32 +96,66 @@ checkDownloadContent()
     fi
 }
 
+# Install the fallback store
+installFallbackStore()
+{
+    # Creating fallback store directories
+    local STORE_PATH=${INSTALLDIR}var/lib/wazuh-server/engine/store
+    local KVDB_PATH=${INSTALLDIR}var/lib/wazuh-server/engine/kvdb
+    local SCHEMA_PATH=${STORE_PATH}/schema
+    local ENGINE_SCHEMA_PATH=${SCHEMA_PATH}/engine-schema/
+    local ENGINE_LOGPAR_TYPE_PATH=${SCHEMA_PATH}/wazuh-logpar-overrides
+    local ENGINE_ALLOWED_FIELDS_PATH=${SCHEMA_PATH}/allowed-fields
+
+    mkdir -p "${KVDB_PATH}"
+    mkdir -p "${ENGINE_SCHEMA_PATH}"
+    mkdir -p "${ENGINE_LOGPAR_TYPE_PATH}"
+    mkdir -p "${ENGINE_ALLOWED_FIELDS_PATH}"
+
+    # Copying the store files
+    echo "Copying store files..."
+    cp "${ENGINE_SRC_PATH}/ruleset/schemas/engine-schema.json" "${ENGINE_SCHEMA_PATH}/0"
+    cp "${ENGINE_SRC_PATH}/ruleset/schemas/wazuh-logpar-overrides.json" "${ENGINE_LOGPAR_TYPE_PATH}/0"
+    cp "${ENGINE_SRC_PATH}/ruleset/schemas/allowed-fields.json" "${ENGINE_ALLOWED_FIELDS_PATH}/0"
+
+    if [ ! -f "${ENGINE_SCHEMA_PATH}/0" ] || [ ! -f "${ENGINE_LOGPAR_TYPE_PATH}/0" ] || [ ! -f "${ENGINE_ALLOWED_FIELDS_PATH}/0" ]; then
+        echo "Error: Failed to copy store files."
+        exit 1
+    fi
+
+    chown -R ${WAZUH_USER}:${WAZUH_GROUP} ${STORE_PATH}
+    chown -R ${WAZUH_USER}:${WAZUH_GROUP} ${KVDB_PATH}
+    find ${STORE_PATH} -type d -exec chmod 750 {} \; -o -type f -exec chmod 640 {} \;
+    find ${KVDB_PATH} -type d -exec chmod 750 {} \; -o -type f -exec chmod 640 {} \;
+}
+
 installEngineStore()
 {
-    STORE_FILENAME='engine_store_0.0.2_5.0.0.tar.gz'
-    STORE_FULL_PATH=${INSTALLDIR}tmp/wazuh-server/${STORE_FILENAME}
-    STORE_URL=https://packages.wazuh.com/deps/engine_store_model_database/${STORE_FILENAME}
     DEST_FULL_PATH=${INSTALLDIR}var/lib/wazuh-server
+    LOCAL_PRECOMPILED_STORE_PATH="${ENGINE_SRC_PATH}/engine_precompiled_store.tar.gz"
 
-    echo "Downloading ${STORE_FILENAME} file..."
-    mkdir -p ${INSTALLDIR}tmp/wazuh-server
-    if ! wget -O ${STORE_FULL_PATH} ${STORE_URL}; then
-        echo "Error: Failed to download ${STORE_FILENAME} from ${STORE_URL}"
+    echo "Checking for precompiled store file...$LOCAL_PRECOMPILED_STORE_PATH"
+    if [ -f "${LOCAL_PRECOMPILED_STORE_PATH}" ]; then
+        echo "Using precompiled store file ${LOCAL_PRECOMPILED_STORE_PATH}"
+    else
+        echo "Installing fallback store..."
+        installFallbackStore
+        return
+    fi
+
+
+    chmod 640 ${LOCAL_PRECOMPILED_STORE_PATH}
+    chown ${WAZUH_USER}:${WAZUH_GROUP} ${LOCAL_PRECOMPILED_STORE_PATH}
+
+    echo "Extracting ${LOCAL_PRECOMPILED_STORE_PATH} to ${DEST_FULL_PATH}..."
+    if ! tar -xzf ${LOCAL_PRECOMPILED_STORE_PATH} -C ${DEST_FULL_PATH}; then
+        echo "Error: Failed to extract ${LOCAL_PRECOMPILED_STORE_PATH} to ${DEST_FULL_PATH}"
         exit 1
     fi
 
-    chmod 640 ${STORE_FULL_PATH}
-    chown ${WAZUH_USER}:${WAZUH_GROUP} ${STORE_FULL_PATH}
-
-    echo "Extracting ${STORE_FILENAME} to ${DEST_FULL_PATH}..."
-    if ! tar -xzf ${STORE_FULL_PATH} -C ${DEST_FULL_PATH}; then
-        echo "Error: Failed to extract ${STORE_FILENAME} to ${DEST_FULL_PATH}"
-        exit 1
-    fi
-
-    echo "Removing tar file ${STORE_FULL_PATH}..."
-    if ! rm -f ${STORE_FULL_PATH}; then
-        echo "Warning: Failed to remove tar file ${STORE_FULL_PATH}."
+    echo "Removing tar file ${LOCAL_PRECOMPILED_STORE_PATH}..."
+    if ! rm -f ${LOCAL_PRECOMPILED_STORE_PATH}; then
+        echo "Warning: Failed to remove tar file ${LOCAL_PRECOMPILED_STORE_PATH}."
     fi
 
     chown -R ${WAZUH_USER}:${WAZUH_GROUP} ${DEST_FULL_PATH}/engine/store
@@ -156,15 +181,10 @@ InstallEngine()
   mkdir -p ${INSTALLDIR}usr/share/wazuh-server/bin
   ${INSTALL} -m 0750 -o ${WAZUH_USER} -g ${WAZUH_GROUP} engine/build/main ${INSTALLDIR}usr/share/wazuh-server/bin/wazuh-engine
 
-  # Folder for the engine socket.
-  ${INSTALL} -d -m 0750 -o ${WAZUH_USER} -g ${WAZUH_GROUP} ${INSTALLDIR}run/wazuh-server/
-
   # Folder for persistent databases (vulnerability scanner, ruleset, connector).
   ${INSTALL} -d -m 0750 -o ${WAZUH_USER} -g ${WAZUH_GROUP} ${INSTALLDIR}var/lib/wazuh-server/
   ${INSTALL} -d -m 0750 -o ${WAZUH_USER} -g ${WAZUH_GROUP} ${INSTALLDIR}var/lib/wazuh-server/vd
   ${INSTALL} -d -m 0750 -o ${WAZUH_USER} -g ${WAZUH_GROUP} ${INSTALLDIR}var/lib/wazuh-server/engine
-  ${INSTALL} -d -m 0755 -o ${WAZUH_USER} -g ${WAZUH_GROUP} ${INSTALLDIR}var/log/wazuh-server
-  ${INSTALL} -d -m 0755 -o ${WAZUH_USER} -g ${WAZUH_GROUP} ${INSTALLDIR}var/log/wazuh-server/engine
 
   cp -rp engine/build/tzdb ${INSTALLDIR}var/lib/wazuh-server/engine/
   chown -R ${WAZUH_USER}:${WAZUH_GROUP} ${INSTALLDIR}var/lib/wazuh-server/engine/tzdb
@@ -177,10 +197,16 @@ InstallEngine()
   installEngineStore
 }
 
+InstallKeystore()
+{
+  ${INSTALL} -m 0750 -o root -g ${WAZUH_GROUP} engine/build/source/keystore/wazuh-keystore ${INSTALLDIR}usr/share/wazuh-server/bin/wazuh-keystore
+}
+
 InstallWazuh()
 {
   InstallCommon
   InstallEngine
+  InstallKeystore
   InstallPython
   InstallPythonDependencies
   InstallServer
@@ -188,12 +214,23 @@ InstallWazuh()
 
 BuildEngine()
 {
-  cd engine
+  ENGINE_SRC_PATH=$(pwd)/engine
+  cd "${ENGINE_SRC_PATH}"
 
   # Configure the engine
   cmake --preset=relwithdebinfo --no-warn-unused-cli
   # Compile only the engine
   cmake --build build --target main -j $(nproc)
+
+  cd ..
+}
+
+BuildKeystore()
+{
+  cd engine
+
+  # Compile only the engine
+  cmake --build build --target wazuh-keystore -j $(nproc)
 
   cd ..
 }

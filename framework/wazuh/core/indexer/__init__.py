@@ -6,13 +6,14 @@ from logging import getLogger
 from typing import AsyncIterator, List
 
 from opensearchpy import AsyncOpenSearch
-from opensearchpy.exceptions import TransportError, ImproperlyConfigured
+from opensearchpy.exceptions import ImproperlyConfigured, TransportError
+from wazuh.core.config.client import CentralizedConfig
+from wazuh.core.config.models.ssl_config import IndexerSSLConfig
 from wazuh.core.exception import WazuhIndexerError
 from wazuh.core.indexer.agent import AgentsIndex
 from wazuh.core.indexer.bulk import MixinBulk
 from wazuh.core.indexer.commands import CommandsManager
-from wazuh.core.config.client import CentralizedConfig
-from wazuh.core.config.models.ssl_config import IndexerSSLConfig
+from wazuh.core.indexer.users import UsersIndex
 
 logger = getLogger('wazuh')
 
@@ -50,6 +51,7 @@ class Indexer(MixinBulk):
         # Register indices and plugins clients here
         self.agents = AgentsIndex(client=self._client)
         self.commands_manager = CommandsManager(client=self._client)
+        self.users = UsersIndex(client=self._client)
 
     def _get_opensearch_client(self) -> AsyncOpenSearch:
         """Get a new OpenSearch client instance.
@@ -58,7 +60,7 @@ class Indexer(MixinBulk):
         ------
         WazuhIndexerError
             In case authentication is not provided.
-        
+
         Raises
         ------
         WazuhIndexerError(2201)
@@ -101,13 +103,12 @@ class Indexer(MixinBulk):
         logger.debug('Connecting to the indexer client.')
         try:
             return await self._client.info()
+        except (ConnectionError, TransportError) as e:
+            raise WazuhIndexerError(2200, extra_message=e.error)
         except ssl.SSLError as e:
             raise WazuhIndexerError(2200, extra_message=e.reason)
-        except TransportError as e:
-            raise WazuhIndexerError(2200, extra_message=e.error)
         except ImproperlyConfigured as e:
             raise WazuhIndexerError(2200, extra_message=f'{e}. Check your indexer configuration and SSL certificates')
-
 
     async def close(self) -> None:
         """Close the Wazuh Indexer client."""
@@ -196,7 +197,7 @@ async def get_indexer_client() -> AsyncIterator[Indexer]:
         user=indexer_config.username,
         password=indexer_config.password,
         ssl=indexer_config.ssl if indexer_config.ssl else None,
-        retries=1
+        retries=3,
     )
 
     try:

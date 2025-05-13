@@ -171,20 +171,17 @@ find_and_create_imported_target("fmt" "fmt::fmt-header-only")
 find_and_create_imported_target("RocksDB" "RocksDB::rocksdb")
 find_and_create_imported_target("Taskflow" "Taskflow::Taskflow")
 find_and_create_imported_target("unofficial-concurrentqueue" "unofficial-concurrentqueue::concurrentqueue")
-find_and_create_imported_target("CLI11" "CLI11::CLI11")
 find_and_create_imported_target("re2" "re2::re2")
 find_and_create_imported_target("CURL" "CURL::libcurl")
 find_and_create_imported_target("maxminddb" "maxminddb::maxminddb")
 find_and_create_imported_target("benchmark" "benchmark::benchmark")
 find_and_create_imported_target("pugixml" "pugixml::pugixml")
 
-find_and_create_imported_target("libuv" "libuv::libuv")
-find_and_create_imported_target("uvw" "uvw::uvw")
-
 find_and_create_imported_target("opentelemetry-cpp" "opentelemetry-cpp::api")
 find_and_create_imported_target("opentelemetry-cpp" "opentelemetry-cpp::sdk")
 find_and_create_imported_target("opentelemetry-cpp" "opentelemetry-cpp::logs")
 find_and_create_imported_target("opentelemetry-cpp" "opentelemetry-cpp::metrics")
+find_and_create_imported_target("opentelemetry-cpp" "opentelemetry-cpp::resources")
 
 find_and_create_imported_target("Protobuf" "protobuf::libprotobuf")
 find_and_create_imported_target("flatbuffers" "flatbuffers::flatbuffers")
@@ -195,6 +192,9 @@ find_and_create_imported_target("date" "date::date-tz")
 
 find_and_create_imported_target("liblzma" "liblzma::liblzma")
 find_and_create_imported_target_ex("LibArchive" "LibArchive::LibArchive")
+
+find_and_create_imported_target_ex("OpenSSL" "OpenSSL::SSL")
+find_and_create_imported_target_ex("OpenSSL" "OpenSSL::Crypto")
 
 ####################################################################################################
 # Targets
@@ -207,7 +207,6 @@ add_subdirectory(${ENGINE_SOURCE_DIR}/vdscanner)
 add_subdirectory(${ENGINE_SOURCE_DIR}/wazuh-http-request)
 add_subdirectory(${ENGINE_SOURCE_DIR}/indexerconnector)
 add_subdirectory(${ENGINE_SOURCE_DIR}/base)
-add_subdirectory(${ENGINE_SOURCE_DIR}/sockiface)
 add_subdirectory(${ENGINE_SOURCE_DIR}/bk)
 add_subdirectory(${ENGINE_SOURCE_DIR}/rbac)
 add_subdirectory(${ENGINE_SOURCE_DIR}/api)
@@ -219,9 +218,7 @@ add_subdirectory(${ENGINE_SOURCE_DIR}/hlp)
 add_subdirectory(${ENGINE_SOURCE_DIR}/logpar)
 add_subdirectory(${ENGINE_SOURCE_DIR}/kvdb)
 add_subdirectory(${ENGINE_SOURCE_DIR}/logicexpr)
-add_subdirectory(${ENGINE_SOURCE_DIR}/server)
 add_subdirectory(${ENGINE_SOURCE_DIR}/yml)
-add_subdirectory(${ENGINE_SOURCE_DIR}/wdb)
 add_subdirectory(${ENGINE_SOURCE_DIR}/store)
 add_subdirectory(${ENGINE_SOURCE_DIR}/router)
 add_subdirectory(${ENGINE_SOURCE_DIR}/conf)
@@ -229,8 +226,10 @@ add_subdirectory(${ENGINE_SOURCE_DIR}/proto)
 add_subdirectory(${ENGINE_SOURCE_DIR}/metrics)
 add_subdirectory(${ENGINE_SOURCE_DIR}/geo)
 add_subdirectory(${ENGINE_SOURCE_DIR}/queue)
-add_subdirectory(${ENGINE_SOURCE_DIR}/apiserver)
 add_subdirectory(${ENGINE_SOURCE_DIR}/fs)
+add_subdirectory(${ENGINE_SOURCE_DIR}/keystore)
+add_subdirectory(${ENGINE_SOURCE_DIR}/httpsrv)
+add_subdirectory(${ENGINE_SOURCE_DIR}/archiver)
 
 target_link_libraries(main
     base
@@ -240,23 +239,23 @@ target_link_libraries(main
     builder
     #bk::taskf
     bk::rx
-    server
     router::router
     store
+    store::fileDriver
     api
-    libuv::uv_a
     kvdb
     eMessages
     metrics
     geo
     schemf
-    wdb
-    sockiface
     rbac
     geo::igeo
     vdscanner
-    apiserver
     indexerconnector
+    httpsrv
+    api::event
+    queue
+    archiver
 )
 
 # If ASAN, UBSAN or any other sanitizers are enabled do not link with static libraries

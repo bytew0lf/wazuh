@@ -1,8 +1,7 @@
-from typing import Optional, Dict, Any, List, Protocol, Coroutine
 from enum import Enum
+from typing import Any, Coroutine, List, Optional, Protocol
 
 from opensearchpy import AsyncOpenSearch
-
 from wazuh.core.indexer.base import IndexerKey
 
 
@@ -18,6 +17,7 @@ class Operation(str, Enum):
     DELETE : str
         Operation to delete an existing document.
     """
+
     CREATE = 'create'
     UPDATE = 'update'
     DELETE = 'delete'
@@ -43,20 +43,21 @@ class BulkMetadata:
     operation : Operation
         Type of operation to perform.
     """
+
     def __init__(self, index: str, doc_id: Optional[str], operation: Operation):
         self.index = index
         self.doc_id = doc_id
         self.operation = operation
 
-    def decode(self) -> Dict[str, Dict[str, str]]:
+    def decode(self) -> bytes:
         """Decode metadata into a dictionary format for the Indexer bulk API.
 
         Returns
         -------
-        Dict[str, Dict[str, str]]
-            Metadata in a dictionary format.
+        bytes
+            Metadata in bytes.
         """
-        return {str(self.operation.value): {'_index': self.index, '_id': self.doc_id}}
+        return f'{{"{self.operation}": {{"_index": "{self.index}", "_id": "{self.doc_id}"}}}}'.encode()
 
 
 class BulkDoc:
@@ -73,24 +74,26 @@ class BulkDoc:
     doc : Optional[Any]
         Document content. Can be None for delete operations.
     """
+
     def __init__(self, index: str, doc_id: Optional[str], operation: Operation, doc: Optional[Any]):
         self.metadata = BulkMetadata(index=index, doc_id=doc_id, operation=operation)
         self.doc = doc
 
-    def decode(self) -> List[Dict]:
-        """Decode the bulk document and its metadata into a list of dictionaries.
+    def decode(self) -> bytes:
+        """Decode the bulk document and its metadata into bytes.
 
         Returns
         -------
-        List[Dict]
-            List of dictionaries representing the bulk operation.
+        bytes
+            Bytes representing the bulk operation.
         """
         if self.doc is None:
-            return [self.metadata.decode()]
-        else:
-            if self.metadata.operation == Operation.UPDATE:
-                self.doc = {IndexerKey.DOC: self.doc}
-            return [self.metadata.decode(), self.doc]
+            return self.metadata.decode()
+
+        if self.metadata.operation == Operation.UPDATE:
+            self.doc = '{'.encode() + f'"{IndexerKey.DOC}":'.encode() + self.doc + '}'.encode()
+
+        return self.metadata.decode() + b'\n' + self.doc
 
     @classmethod
     def create(cls, index: str, doc_id: Optional[str], doc: Any) -> 'BulkDoc':
@@ -153,6 +156,7 @@ class BulkDoc:
 
 class RequiresClient(Protocol):
     """Protocol to ensure that a class has a _client attribute of type AsyncOpenSearch."""
+
     _client: AsyncOpenSearch
 
 
@@ -160,6 +164,7 @@ class MixinBulk:
     """Mixin to add bulk operation functionality to a class.
     This Mixin requires that the class using it has an attribute `_client` of type `AsyncOpenSearch`.
     """
+
     async def bulk(self: RequiresClient, data: List[BulkDoc]) -> Coroutine:
         """Execute a bulk operation using the provided list of `BulkDoc` instances.
 
@@ -173,8 +178,8 @@ class MixinBulk:
         Coroutine
             Coroutine that performs the bulk operation in the Indexer.
         """
-        bulk_docs = []
+        bulk_docs = b''
         for doc in data:
-            bulk_docs += doc.decode()
+            bulk_docs += doc.decode() + b'\n'
 
         return await self._client.bulk(bulk_docs)

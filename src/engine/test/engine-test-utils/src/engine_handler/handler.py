@@ -7,6 +7,7 @@ from typing import Optional
 from api_communication.client import APIClient
 from api_communication.proto import router_pb2 as api_router
 
+DEFAULT_ENGINE_RETRY_SLEEP: int = 2
 
 class EngineHandler:
     """EngineHandler class is responsible for starting and stopping an Engine process"""
@@ -50,7 +51,7 @@ class EngineHandler:
 
         for key, value in self.config_env.items():
             os.environ[key] = value
-    
+
     def _unset_env(self) -> None:
         """Unsets the environment variables for the engine process"""
 
@@ -97,7 +98,7 @@ class EngineHandler:
             if error == None:
                 break
 
-            time.sleep(1)
+            time.sleep(DEFAULT_ENGINE_RETRY_SLEEP)
             current_attempt += 1
 
         if current_attempt == max_attempts:
@@ -144,3 +145,15 @@ class EngineHandler:
         self.process.terminate()
         self.process.wait()
         self._unset_env() # Unset the environment variables after stopping the process
+
+    def get_pid(self) -> int:
+        """Gets the PID of the engine process
+
+        Returns:
+            int: The PID of the engine process
+        """
+
+        if self.process is None:
+            raise Exception("Engine process is not running")
+
+        return self.process.pid

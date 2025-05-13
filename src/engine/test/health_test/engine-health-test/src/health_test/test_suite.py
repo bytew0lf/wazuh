@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List, Tuple, Optional, Union
 from abc import ABC, abstractmethod
 from engine_handler.handler import EngineHandler
-
+from shared.default_settings import Constants
 
 class UnitOutput:
     def __init__(self, index: int, result: Union[str, dict]):
@@ -188,7 +188,7 @@ def run_test(test_parent_path: Path, engine_api_socket: str, unit_result: type, 
 
         ns = "wazuh system" if target == 'rule' else "wazuh"
         engine_test_command = f"engine-test -c {engine_test_conf.resolve().as_posix()} "
-        engine_test_command += f"run {test_name} --api-socket {engine_api_socket} -n {ns} {debug_mode} -j"
+        engine_test_command += f"run {test_name} -s {Constants.DEFAULT_SESSION} --api-socket {engine_api_socket} -n {ns} {debug_mode} -j"
         command = f"cat {input_file.resolve().as_posix()} | {engine_test_command}"
         test_result = test(input_file, expected_file,
                            unit_result, command, target, help)
@@ -260,13 +260,12 @@ def decoder_health_test(env_path: Path, unit_result: type, debug_mode: str, inte
 
     if success:
         print("All tests passed.")
-        sys.exit(0)
     else:
         sys.exit(1)
 
 
-def rule_health_test(env_path: Path, unit_result: type, debug_mode: str, ruleset_name: Optional[str] = None, skip: Optional[List[str]] = None):
-    print("Validating environment for rules...")
+def rule_health_test(env_path: Path, unit_result: type, debug_mode: str, integration_rule: Optional[str] = None, skip: Optional[List[str]] = None):
+    print("Validating environment...")
     conf_path = (env_path / "config.env").resolve()
     if not conf_path.is_file():
         sys.exit(f"Configuration file not found: {conf_path}")
@@ -275,41 +274,42 @@ def rule_health_test(env_path: Path, unit_result: type, debug_mode: str, ruleset
     if not bin_path.is_file():
         sys.exit(f"Engine binary not found: {bin_path}")
 
-    rules_path = (env_path / "ruleset/rules").resolve()
-    if not rules_path.exists():
-        sys.exit(f"Rules directory not found: {rules_path}")
+    integrations_rule_path = (env_path / "ruleset/integrations-rules").resolve()
+    if not integrations_rule_path.exists():
+        sys.exit(f"Integrations rules directory not found: {integrations_rule_path}")
     print("Environment validated.")
 
     print("Starting engine...")
     engine_handler = EngineHandler(bin_path.as_posix(), conf_path.as_posix())
 
     results: List[Result] = []
-    rules: List[Path] = []
+    integrations: List[Path] = []
 
     try:
-        if ruleset_name is not None:
-            print(f"Specific ruleset: {ruleset_name}")
-            ruleset_path = rules_path / ruleset_name
-            if not ruleset_path.exists():
-                sys.exit(f"Ruleset {ruleset_name} not found.")
-            rules.append(ruleset_path)
+        if integration_rule is not None:
+            print(f"Specified integration: {integration_rule}")
+            integration_path = integrations_rule_path / integration_rule
+            if not integration_path.exists():
+                sys.exit(f"Integration {integration_rule} not found.")
+
+            integrations.append(integration_path)
         else:
-            for ruleset_path in rules_path.iterdir():
-                if not ruleset_path.is_dir():
+            for integration_path in integrations_rule_path.iterdir():
+                if not integration_path.is_dir():
                     continue
-                print(f'Discovered ruleset: {ruleset_path.name}')
-                if skip and ruleset_path.name in skip:
-                    print(f'Skipping ruleset: {ruleset_path.name}')
+                print(f'Discovered integration rule: {integration_path.name}')
+                if skip and integration_path.name in skip:
+                    print(f'Skipping integration rule: {integration_path.name}')
                     continue
-                rules.append(ruleset_path)
+                integrations.append(integration_path)
 
         engine_handler.start()
         print("Engine started.")
 
         print("\n\nRunning tests...")
-        for ruleset_path in rules:
+        for integration_path in integrations:
             result = run_test(
-                ruleset_path, engine_handler.api_socket_path, unit_result, debug_mode, 'rule', env_path)
+                integration_path, engine_handler.api_socket_path, unit_result, debug_mode, 'rule', env_path)
             results.append(result)
 
     finally:
@@ -327,7 +327,6 @@ def rule_health_test(env_path: Path, unit_result: type, debug_mode: str, ruleset
 
     if success:
         print("All tests passed.")
-        sys.exit(0)
     else:
         sys.exit(1)
 
@@ -338,18 +337,18 @@ def run(args, unit_result: type, debug_mode: str):
             "Only types that implement the UnitResultInterface interface are supported")
     env_path = Path(args['environment'])
     integration_name = args.get('integration')
-    rule_folder = args.get('rule_folder')
+    integration_rule = args.get('integration_rule')
     target = args.get('target')
     skip = args['skip']
 
     provided_args = sum(
-        [bool(integration_name), bool(rule_folder), bool(target)])
+        [bool(integration_name), bool(integration_rule), bool(target)])
     if provided_args > 1:
         sys.exit(
-            "It is only possible to specify one of the following arguments: 'target', 'integration' or 'rule_folder'")
+            "It is only possible to specify one of the following arguments: 'target', 'integration' or 'integration_rule'")
 
-    if rule_folder:
-        return rule_health_test(env_path, unit_result, debug_mode, rule_folder, skip)
+    if integration_rule:
+        return rule_health_test(env_path, unit_result, debug_mode, integration_rule, skip)
 
     elif integration_name:
         return decoder_health_test(env_path, unit_result, debug_mode, integration_name, skip)
@@ -358,7 +357,7 @@ def run(args, unit_result: type, debug_mode: str):
         if target == 'decoder':
             return decoder_health_test(env_path, unit_result, debug_mode, integration_name, skip)
         elif target == 'rule':
-            return rule_health_test(env_path, unit_result, debug_mode, rule_folder, skip)
+            return rule_health_test(env_path, unit_result, debug_mode, integration_rule, skip)
         else:
             sys.exit(f"The {target} target is not currently supported")
 

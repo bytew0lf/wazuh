@@ -15,7 +15,7 @@ from api_utils.commands import engine_clear
 import time
 
 ENV_DIR = os.environ.get("ENV_DIR", "")
-SOCKET_PATH = ENV_DIR + "/queue/sockets/engine-api"
+SOCKET_PATH = ENV_DIR + "/queue/sockets/engine-api.socket"
 RULESET_DIR = ENV_DIR + "/engine"
 
 api_client = APIClient(SOCKET_PATH)
@@ -226,14 +226,6 @@ def step_impl(context, policy_name: str, integration_name: str):
 @when('I send a request to delete the policy "{policy_name}"')
 def step_impl(context, policy_name: str):
     delete_policy(policy_name)
-
-
-@when('I send a request to send event "{event}" to the route "{route_name}"')
-def step_impl(context, event: str, route_name: str):
-    request = api_router.QueuePost_Request()
-    request.wazuh_event = event
-    error, context.result = send_recv(
-        request, api_engine.GenericStatus_Response())
 
 
 @when('I send a request to {request} the filter "{filter_name}"')

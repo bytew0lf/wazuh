@@ -8,6 +8,8 @@ import time
 import sys
 import subprocess
 from shared.default_settings import Constants, CONFIG_ENV_KEYS
+from api_communication.proto import tester_pb2 as api_tester
+
 from engine_handler.handler import EngineHandler
 from api_communication.proto import catalog_pb2 as api_catalog
 from api_communication.proto import engine_pb2 as api_engine
@@ -16,7 +18,7 @@ from google.protobuf.json_format import ParseDict
 import shared.resource_handler as rs
 import ipaddress
 from datetime import datetime
-
+from health_test.utils import *
 
 class UnitOutput:
     def __init__(self, index: int, result: Union[str, dict]):
@@ -37,23 +39,27 @@ class UnitResult:
 
     def setup(self, actual: dict):
         self.diff = {}
-        if self.expected == actual:
+        filtered_expected = filter_nested(self.expected)
+        filtered_actual  = filter_nested(actual)
+
+        if filtered_expected == filtered_actual:
             self.success = True
             return
         else:
             self.success = False
 
-        for key in self.expected:
-            if key not in actual:
+        for key in filtered_expected:
+            if key not in filtered_actual:
                 self.diff[key] = {"info": "Missing key in actual result",
-                                  "expected": self.expected[key]}
-            elif self.expected[key] != actual[key]:
+                                  "expected": filtered_expected[key]}
+                return
+            elif filtered_expected[key] != filtered_actual[key]:
                 self.diff[key] = {"info": "Mismatched value",
-                                  "expected": self.expected[key], "actual": actual[key]}
-        for key in actual:
-            if key not in self.expected:
+                                  "expected": filtered_expected[key], "actual": filtered_actual[key]}
+        for key in filtered_actual:
+            if key not in filtered_expected:
                 self.diff[key] = {"info": "Extra key in actual result",
-                                  "actual": actual[key]}
+                                  "actual": filtered_actual[key]}
 
 
 class UnitOutput:
@@ -150,23 +156,6 @@ def is_valid_ip(value):
         return False
 
 
-def is_valid_date(value):
-    try:
-        datetime.fromisoformat(value)
-        return True
-    except ValueError:
-        return False
-
-
-def is_valid_ip(value):
-    """ Check if the value is a valid IP address. """
-    try:
-        ipaddress.ip_address(value)
-        return True
-    except ValueError:
-        return False
-
-
 def get_validation_function(field_type):
     if field_type == 'object':
         return lambda value: isinstance(value, dict) and bool(value)
@@ -218,7 +207,6 @@ def load_custom_fields(integration, custom_fields_path, allowed_types):
         return custom_fields_map, failure_load_custom_fields
     except Exception as e:
         sys.exit(f"Error loading custom fields from {custom_fields_path}: {e}")
-        return {}, failure_load_custom_fields
 
 
 def get_value_from_hierarchy(data, field):
@@ -305,16 +293,16 @@ class OpensearchManagement:
     def check_custom_fields(self, custom_fields: dict, all_custom_fields: set, hits: list):
         filtered_invalid_fields = set(all_custom_fields)
         for hit in hits:
-            for field, (type, validate_function) in custom_fields.items():
+            for field, (type_, validate_function) in custom_fields.items():
                 expected_value = get_value_from_hierarchy(hit['_source'], field)
                 if expected_value == None:
                     continue
                 if validate_function(expected_value):
-                    if type == 'object':
+                    if type_ == 'object':
                         for invalid_field in filtered_invalid_fields:
                             if invalid_field.startswith(field + '.'):
                                 all_custom_fields.discard(invalid_field)
-                    elif type == 'nested':
+                    elif type_ == 'nested':
                         for invalid_field in filtered_invalid_fields:
                             all_custom_fields.discard(invalid_field)
                     else:
@@ -452,7 +440,7 @@ def run_all_tests(test_parent_paths: List[Path],
             test_name = test_parent_name
             if input_file.parent != test_dir:
                 test_name = f"{test_parent_name}-{input_file.parent.name}"
-            engine_test_command = f"engine-test -c {engine_test_conf.resolve().as_posix()} run {test_name} --api-socket {engine_api_socket} -j"
+            engine_test_command = f"engine-test -c {engine_test_conf.resolve().as_posix()} run {test_name} -s {Constants.DEFAULT_SESSION} --api-socket {engine_api_socket} -j"
             command = f"cat {input_file.resolve().as_posix()} | {engine_test_command}"
 
             output = test(input_file, command, customs, schema_fields)
@@ -535,11 +523,10 @@ def load_indexer_output(engine_handler: EngineHandler) -> None:
                 "date": "2024/12/01"
             }
         },
-        "check": "not_exists($wazuh.noIndexing) OR $wazuh.noIndexing == false",
         "outputs": [
             {
                 "wazuh-indexer": {
-                    "index": "alerts"
+                    "index": Constants.INDEX_PATTERN
                 }
             }
         ]
@@ -612,6 +599,18 @@ def delete_indexer_output_in_policy(engine_handler: EngineHandler, stop_on_warn:
     print("indexer output deleted to policy.")
 
 
+def reload_session(engine_handler: EngineHandler) -> None:
+    request = api_tester.SessionReload_Request()
+    request.name = Constants.DEFAULT_SESSION
+    print(f"Reloading session...\n{request}")
+    error, response = engine_handler.api_client.send_recv(request)
+    if error:
+        sys.exit(error)
+    parsed_response = ParseDict(response, api_engine.GenericStatus_Response())
+    if parsed_response.status == api_engine.ERROR:
+        sys.exit(parsed_response.error)
+    print("Session reloaded.")
+
 def decoder_health_test(env_path: Path, integration_name: Optional[str] = None, skip: Optional[List[str]] = None):
     print("Validating environment...")
     conf_path = (env_path / "config.env").resolve()
@@ -635,7 +634,8 @@ def decoder_health_test(env_path: Path, integration_name: Optional[str] = None, 
         sys.exit(f"Error reading the JSON schema file: {e}")
 
     print("Starting engine...")
-    engine_handler = EngineHandler(bin_path.as_posix(), conf_path.as_posix(), override_env={CONFIG_ENV_KEYS.LOG_LEVEL.value: "warning"})
+    engine_handler = EngineHandler(bin_path.as_posix(), conf_path.as_posix(), override_env={
+                                   CONFIG_ENV_KEYS.LOG_LEVEL.value: "warning"})
 
     integrations: List[Path] = []
     CORE_WAZUH_DECODER_PATH = env_path / 'ruleset' / 'decoders' / 'wazuh-core' / 'core-wazuh-message.yml'
@@ -661,7 +661,6 @@ def decoder_health_test(env_path: Path, integration_name: Optional[str] = None, 
 
         opensearch_management.init_opensearch(env_path / 'ruleset' / 'schemas' / 'wazuh-template.json')
 
-
         log = (env_path / "logs/engine.log").as_posix()
         engine_handler.start(log)
         print("Engine started.")
@@ -669,6 +668,7 @@ def decoder_health_test(env_path: Path, integration_name: Optional[str] = None, 
         if not exist_index_output(engine_handler):
             load_indexer_output(engine_handler)
             load_indexer_output_in_policy(engine_handler)
+            reload_session(engine_handler)
 
         print("\n\nRunning tests...")
         results = run_test(integrations, engine_handler.api_socket_path, schema_data)
@@ -680,6 +680,8 @@ def decoder_health_test(env_path: Path, integration_name: Optional[str] = None, 
     if exist_index_output(engine_handler):
         delete_indexer_output_in_policy(engine_handler)
         delete_indexer_output(engine_handler)
+        reload_session(engine_handler)
+
     print("Restart wazuh-core-message decoder changes")
     engine_handler.stop()
     opensearch_management.stop()
@@ -695,12 +697,11 @@ def decoder_health_test(env_path: Path, integration_name: Optional[str] = None, 
 
     if success:
         print("All tests passed.")
-        sys.exit(0)
     else:
         sys.exit(1)
 
 
-def rule_health_test(env_path: Path, ruleset_name: Optional[str] = None, skip: Optional[List[str]] = None):
+def rule_health_test(env_path: Path, integration_rule: Optional[str] = None, skip: Optional[List[str]] = None):
     print("Validating environment for rules...")
     conf_path = (env_path / "config.env").resolve()
     if not conf_path.is_file():
@@ -710,9 +711,9 @@ def rule_health_test(env_path: Path, ruleset_name: Optional[str] = None, skip: O
     if not bin_path.is_file():
         sys.exit(f"Engine binary not found: {bin_path}")
 
-    rules_path = (env_path / "ruleset/rules").resolve()
-    if not rules_path.exists():
-        sys.exit(f"Rules directory not found: {rules_path}")
+    integrations_rules_path = (env_path / "ruleset/integrations-rules").resolve()
+    if not integrations_rules_path.exists():
+        sys.exit(f"Integrations rules directory not found: {integrations_rules_path}")
     print("Environment validated.")
 
     schema = env_path / "ruleset/schemas/engine-schema.json"
@@ -723,7 +724,8 @@ def rule_health_test(env_path: Path, ruleset_name: Optional[str] = None, skip: O
         sys.exit(f"Error reading the JSON schema file: {e}")
 
     print("Starting engine...")
-    engine_handler = EngineHandler(bin_path.as_posix(), conf_path.as_posix(), override_env={CONFIG_ENV_KEYS.LOG_LEVEL.value: "warning"})
+    engine_handler = EngineHandler(bin_path.as_posix(), conf_path.as_posix(), override_env={
+                                   CONFIG_ENV_KEYS.LOG_LEVEL.value: "warning"})
 
     results: List[Result] = []
     rules: List[Path] = []
@@ -731,24 +733,23 @@ def rule_health_test(env_path: Path, ruleset_name: Optional[str] = None, skip: O
     original_log_level = ""
 
     try:
-        if ruleset_name is not None:
-            print(f"Specific ruleset: {ruleset_name}")
-            ruleset_path = rules_path / ruleset_name
+        if integration_rule is not None:
+            print(f"Specific ruleset: {integration_rule}")
+            ruleset_path = integrations_rules_path / integration_rule
             if not ruleset_path.exists():
-                sys.exit(f"Ruleset {ruleset_name} not found.")
+                sys.exit(f"Ruleset {integration_rule} not found.")
             rules.append(ruleset_path)
         else:
-            for ruleset_path in rules_path.iterdir():
+            for ruleset_path in integrations_rules_path.iterdir():
                 if not ruleset_path.is_dir():
                     continue
-                print(f'Discovered ruleset: {ruleset_path.name}')
+                print(f'Discovered integration rule: {ruleset_path.name}')
                 if skip and ruleset_path.name in skip:
-                    print(f'Skipping ruleset: {ruleset_path.name}')
+                    print(f'Skipping integration rule: {ruleset_path.name}')
                     continue
                 rules.append(ruleset_path)
 
         opensearch_management.init_opensearch(env_path / 'ruleset' / 'schemas' / 'wazuh-template.json')
-
 
         log = (env_path / "logs/engine.log").as_posix()
         engine_handler.start(log)
@@ -756,7 +757,7 @@ def rule_health_test(env_path: Path, ruleset_name: Optional[str] = None, skip: O
         if not exist_index_output(engine_handler):
             load_indexer_output(engine_handler)
             load_indexer_output_in_policy(engine_handler)
-        print("Update wazuh-core-message decoder")
+            reload_session(engine_handler)
 
         print("\n\nRunning tests...")
         results = run_test(rules, engine_handler.api_socket_path, schema_data)
@@ -768,7 +769,8 @@ def rule_health_test(env_path: Path, ruleset_name: Optional[str] = None, skip: O
         if exist_index_output(engine_handler):
             delete_indexer_output_in_policy(engine_handler)
             delete_indexer_output(engine_handler)
-        print("Restart wazuh-core-message decoder changes")
+            reload_session(engine_handler)
+
         engine_handler.stop()
         opensearch_management.stop()
         print("Engine stopped.\n\n")
@@ -784,7 +786,6 @@ def rule_health_test(env_path: Path, ruleset_name: Optional[str] = None, skip: O
 
     if success:
         print("All tests passed.")
-        sys.exit(0)
     else:
         sys.exit(1)
 
@@ -792,16 +793,16 @@ def rule_health_test(env_path: Path, ruleset_name: Optional[str] = None, skip: O
 def run(args):
     env_path = Path(args['environment'])
     integration_name = args.get('integration')
-    rule_folder = args.get('rule_folder')
+    integration_rule = args.get('integration_rule')
     target = args.get('target')
     skip = args['skip']
 
-    provided_args = sum([bool(integration_name), bool(rule_folder), bool(target)])
+    provided_args = sum([bool(integration_name), bool(integration_rule), bool(target)])
     if provided_args > 1:
-        sys.exit("It is only possible to specify one of the following arguments: 'target', 'integration' or 'rule_folder'")
+        sys.exit("It is only possible to specify one of the following arguments: 'target', 'integration' or 'integration_rule'")
 
-    if rule_folder:
-        return rule_health_test(env_path, rule_folder, skip)
+    if integration_rule:
+        return rule_health_test(env_path, integration_rule, skip)
 
     elif integration_name:
         return decoder_health_test(env_path, integration_name, skip)
@@ -810,7 +811,7 @@ def run(args):
         if target == 'decoder':
             return decoder_health_test(env_path, integration_name, skip)
         elif target == 'rule':
-            return rule_health_test(env_path, rule_folder, skip)
+            return rule_health_test(env_path, integration_rule, skip)
         else:
             sys.exit(f"The {target} target is not currently supported")
 

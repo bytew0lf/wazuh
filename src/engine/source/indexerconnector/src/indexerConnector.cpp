@@ -30,70 +30,10 @@ constexpr auto PASSWORD_KEY {"password"};
 constexpr auto ELEMENTS_PER_BULK {1000};
 constexpr auto WAZUH_OWNER {"wazuh"};
 constexpr auto WAZUH_GROUP {"wazuh"};
-constexpr auto MERGED_CA_PATH {"/tmp/wazuh-server/root-ca-merged.pem"};
+constexpr auto MERGED_CA_PATH {"/var/lib/wazuh-server/tmp/root-ca-merged.pem"};
 
 // Single thread in case the events needs to be processed in order.
 constexpr auto SINGLE_ORDERED_DISPATCHING = 1;
-
-/**
- * @brief Merges the CA root certificates into a single file.
- * @param filePaths The list of CA root certificates file paths.
- * @param caRootCertificate The path to the merged CA root certificate.
- * @throws std::runtime_error If the CA root certificate file does not exist, could not be opened, written or the
- * ownership could not be changed.
- */
-static void mergeCaRootCertificates(const std::vector<std::string>& filePaths, std::string& caRootCertificate)
-{
-    std::string caRootCertificateContentMerged;
-
-    for (const auto& filePath : filePaths)
-    {
-        if (!std::filesystem::exists(filePath))
-        {
-            throw std::runtime_error("The CA root certificate file: '" + filePath + "' does not exist.");
-        }
-
-        std::ifstream file(filePath);
-        if (!file.is_open())
-        {
-            throw std::runtime_error("Could not open CA root certificate file: '" + filePath + "'.");
-        }
-
-        caRootCertificateContentMerged.append((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    }
-
-    caRootCertificate = MERGED_CA_PATH;
-
-    if (std::filesystem::path dirPath = std::filesystem::path(caRootCertificate).parent_path();
-        !std::filesystem::exists(dirPath) && !std::filesystem::create_directories(dirPath))
-    {
-        throw std::runtime_error("Could not create the directory for the CA root merged file");
-    }
-
-    std::ofstream outputFile(caRootCertificate);
-    if (!outputFile.is_open())
-    {
-        throw std::runtime_error("Could not write the CA root merged file");
-    }
-
-    outputFile << caRootCertificateContentMerged;
-    outputFile.close();
-
-    struct passwd* pwd = getpwnam(WAZUH_OWNER);
-    struct group* grp = getgrnam(WAZUH_GROUP);
-
-    if (pwd == nullptr && grp == nullptr)
-    {
-        throw std::runtime_error("Could not get the user and group information.");
-    }
-
-    if (chown(caRootCertificate.c_str(), pwd->pw_uid, grp->gr_gid) != 0)
-    {
-        throw std::runtime_error("Could not change the ownership of the CA root merged file");
-    }
-
-    LOG_DEBUG("All CA files merged into '{}' successfully.", caRootCertificate.c_str());
-}
 
 static void initConfiguration(SecureCommunication& secureCommunication, const IndexerConnectorOptions& config)
 {
@@ -103,13 +43,9 @@ static void initConfiguration(SecureCommunication& secureCommunication, const In
     std::string username;
     std::string password;
 
-    if (config.sslOptions.cacert.size() > 1)
+    if (!config.sslOptions.cacert.empty())
     {
-        mergeCaRootCertificates(config.sslOptions.cacert, caRootCertificate);
-    }
-    else if (!config.sslOptions.cacert.empty())
-    {
-        caRootCertificate = config.sslOptions.cacert.front();
+        caRootCertificate = config.sslOptions.cacert;
     }
     else
     {
@@ -136,7 +72,8 @@ static void initConfiguration(SecureCommunication& secureCommunication, const In
     secureCommunication.basicAuth(username + ":" + password)
         .sslCertificate(sslCertificate)
         .sslKey(sslKey)
-        .caRootCertificate(caRootCertificate);
+        .caRootCertificate(caRootCertificate)
+        .skipPeerVerification(config.sslOptions.skipVerifyPeer);
 }
 
 static void builderBulkDelete(std::string& bulkData, std::string_view id, std::string_view index)
@@ -203,7 +140,7 @@ IndexerConnector::IndexerConnector(const IndexerConnectorOptions& indexerConnect
 
             auto url = selector->getNext();
             std::string bulkData;
-            url.append("/_bulk?refresh=wait_for");
+            url.append("/_bulk");
 
             std::string indexNameCurrentDate = m_indexName;
             base::utils::string::replaceAll(indexNameCurrentDate, "$(date)", base::utils::time::getCurrentDate("."));
@@ -214,19 +151,53 @@ IndexerConnector::IndexerConnector(const IndexerConnectorOptions& indexerConnect
                 dataQueue.pop();
                 auto parsedData = nlohmann::json::parse(data, nullptr, false);
 
+                // If the data is not a valid JSON, log a warning and continue.
                 if (parsedData.is_discarded())
                 {
+                    LOG_WARNING("Failed to parse event data: {}", data);
                     continue;
                 }
 
-                if (parsedData.at("operation").get_ref<const std::string&>().compare("DELETED") == 0)
+                // Validate required fields.
+                if (!parsedData.contains("operation"))
                 {
-                    const auto& id = parsedData.at("id").get_ref<const std::string&>();
+                    LOG_WARNING("Event required field (operation) is missing: {}", data);
+                    continue;
+                }
+
+                // Operation is the action to be performed on the element.
+                const auto& operation = parsedData.at("operation").get_ref<const std::string&>();
+
+                // Id is the unique identifier of the element.
+                const auto& id = parsedData.contains("id") ? parsedData.at("id").get_ref<const std::string&>() : "";
+
+                if (operation.compare("DELETED") == 0)
+                {
+                    // Validate required fields.
+                    if (id.empty())
+                    {
+                        LOG_WARNING("Event required field (id) is missing: {}", data);
+                        continue;
+                    }
+
                     builderBulkDelete(bulkData, id, indexNameCurrentDate);
                 }
                 else
                 {
-                    const auto& id = parsedData.contains("id") ? parsedData.at("id").get_ref<const std::string&>() : "";
+                    // Validate required fields.
+                    if (!parsedData.contains("data"))
+                    {
+                        LOG_WARNING("Event required field (data) is missing: {}", data);
+                        continue;
+                    }
+
+                    if (parsedData.contains("index"))
+                    {
+                        indexNameCurrentDate = parsedData.at("index").get<std::string>();
+                        base::utils::string::replaceAll(
+                            indexNameCurrentDate, "$(date)", base::utils::time::getCurrentDate("."));
+                    }
+
                     const auto dataString = parsedData.at("data").dump();
                     builderBulkIndex(bulkData, id, indexNameCurrentDate, dataString);
                 }

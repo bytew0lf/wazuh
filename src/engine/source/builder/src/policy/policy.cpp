@@ -13,7 +13,10 @@ Policy::Policy(const store::Doc& doc,
                const std::shared_ptr<store::IStoreReader>& store,
                const std::shared_ptr<defs::IDefinitionsBuilder>& definitionsBuilder,
                const std::shared_ptr<builders::RegistryType>& registry,
-               const std::shared_ptr<schemf::IValidator>& schema)
+               const std::shared_ptr<schemf::IValidator>& schema,
+               const std::shared_ptr<IAllowedFields>& allowedFields,
+               const bool trace,
+               const bool sandbox)
 {
     // Read the policy data
     auto policyData = factory::readData(doc, store);
@@ -30,7 +33,9 @@ Policy::Policy(const store::Doc& doc,
     buildCtx->setRegistry(registry);
     buildCtx->setValidator(schema);
     buildCtx->context().policyName = m_name;
-    buildCtx->runState().trace = true;
+    buildCtx->runState().trace = trace;
+    buildCtx->runState().sandbox = sandbox;
+    buildCtx->setAllowedFields(allowedFields);
 
     auto assetBuilder = std::make_shared<AssetBuilder>(buildCtx, definitionsBuilder);
     auto builtAssets = factory::buildAssets(policyData, store, assetBuilder);

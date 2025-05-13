@@ -9,12 +9,14 @@ import sys
 import subprocess
 from engine_handler.handler import EngineHandler
 from shared.default_settings import Constants, CONFIG_ENV_KEYS
+from api_communication.proto import tester_pb2 as api_tester
+
 import yaml
 from api_communication.proto import catalog_pb2 as api_catalog
 from api_communication.proto import engine_pb2 as api_engine
 from api_communication.proto import policy_pb2 as api_policy
 from google.protobuf.json_format import ParseDict
-
+from health_test.utils import *
 
 class UnitOutput:
     def __init__(self, index: int, result: Union[str, dict]):
@@ -35,23 +37,27 @@ class UnitResult:
 
     def setup(self, actual: dict):
         self.diff = {}
-        if self.expected == actual:
+        filtered_expected = filter_nested(self.expected)
+        filtered_actual  = filter_nested(actual)
+
+        if filtered_expected == filtered_actual:
             self.success = True
             return
         else:
             self.success = False
 
-        for key in self.expected:
-            if key not in actual:
+        for key in filtered_expected:
+            if key not in filtered_actual:
                 self.diff[key] = {"info": "Missing key in actual result",
-                                  "expected": self.expected[key]}
-            elif self.expected[key] != actual[key]:
+                                  "expected": filtered_expected[key]}
+                return
+            elif filtered_expected[key] != filtered_actual[key]:
                 self.diff[key] = {"info": "Mismatched value",
-                                  "expected": self.expected[key], "actual": actual[key]}
-        for key in actual:
-            if key not in self.expected:
+                                  "expected": filtered_expected[key], "actual": filtered_actual[key]}
+        for key in filtered_actual:
+            if key not in filtered_expected:
                 self.diff[key] = {"info": "Extra key in actual result",
-                                  "actual": actual[key]}
+                                  "actual": filtered_actual[key]}
 
 
 class UnitOutput:
@@ -199,7 +205,7 @@ class OpensearchManagement:
             print(f"An unexpected error occurred: {e}")
             self.stop()
 
-    def read_index(self, result: TestResult, expecteds: List[UnitOutput], retries=5, delay=4) -> bool:
+    def read_index(self, result: TestResult, expecteds: List[UnitOutput], retries=6, delay=5) -> bool:
         url_search = f'http://localhost:9200/{Constants.INDEX_PATTERN}/_search'
         headers = {"Content-Type": "application/json"}
         not_found = []
@@ -303,7 +309,7 @@ def run_all_tests(test_parent_paths: List[Path], engine_api_socket: str) -> Dict
             test_name = test_parent_name
             if input_file.parent != test_dir:
                 test_name = f"{test_parent_name}-{input_file.parent.name}"
-            engine_test_command = f"engine-test -c {engine_test_conf.resolve().as_posix()} run {test_name} --api-socket {engine_api_socket} -j"
+            engine_test_command = f"engine-test -c {engine_test_conf.resolve().as_posix()} run {test_name} -s {Constants.DEFAULT_SESSION} --api-socket {engine_api_socket} -j"
             command = f"cat {input_file.resolve().as_posix()} | {engine_test_command}"
 
             output = test(input_file, command)
@@ -371,11 +377,10 @@ def load_indexer_output(engine_handler: EngineHandler) -> None:
                 "date": "2024/12/01"
             }
         },
-        "check": "not_exists($wazuh.noIndexing) OR $wazuh.noIndexing == false",
         "outputs": [
             {
                 "wazuh-indexer": {
-                    "index": "alerts"
+                    "index": Constants.INDEX_PATTERN
                 }
             }
         ]
@@ -476,22 +481,47 @@ def modify_core_wazuh_decoder(file_path: Path, add_hash: bool = True):
     with file_path.open('r') as file:
         content = yaml.safe_load(file)
 
-    for entry in content['normalize']:
-        if 'map' in entry:
-            if add_hash:
-                if not any(isinstance(item, dict) and 'event_hash' in item for item in entry['map']):
-                    entry['map'].append({'event_hash': 'sha1($event.original)'})
-                    print("Added 'event_hash' mapping.")
-                else:
-                    print("'event_hash' already exists.")
-            else:
-                entry['map'] = [item for item in entry['map'] if not (isinstance(item, dict) and 'event_hash' in item)]
-                print("Removed 'event_hash' from normalize.")
-            break
+    # for entry in content['normalize']:
+    #     if 'map' in entry:
+    #         if add_hash:
+    #             if not any(isinstance(item, dict) and 'event_hash' in item for item in entry['map']):
+    #                 entry['map'].append({'event_hash': 'sha1($event.original)'})
+    #                 print("Added 'event_hash' mapping.")
+    #             else:
+    #                 print("'event_hash' already exists.")
+    #         else:
+    #             entry['map'] = [item for item in entry['map'] if not (isinstance(item, dict) and 'event_hash' in item)]
+    #             print("Removed 'event_hash' from normalize.")
+    #         break
+
+    entry = content.setdefault('normalize', [{}])[0]
+    entry['map'] = entry.get('map', [])
+
+    if add_hash:
+        if not any(isinstance(item, dict) and 'event_hash' in item for item in entry['map']):
+            entry['map'].append({'event_hash': 'sha1($event.original)'})
+            print("Added 'event_hash' mapping.")
+        else:
+            print("'event_hash' already exists.")
+    else:
+        del content['normalize']
+        print("Removed 'event_hash' from normalize.")
 
     with file_path.open('w') as file:
         yaml.dump(content, file, default_flow_style=False, sort_keys=False)
 
+
+def reload_session(engine_handler: EngineHandler) -> None:
+    request = api_tester.SessionReload_Request()
+    request.name = Constants.DEFAULT_SESSION
+    print(f"Reloading session...\n{request}")
+    error, response = engine_handler.api_client.send_recv(request)
+    if error:
+        sys.exit(error)
+    parsed_response = ParseDict(response, api_engine.GenericStatus_Response())
+    if parsed_response.status == api_engine.ERROR:
+        sys.exit(parsed_response.error)
+    print("Session reloaded.")
 
 def decoder_health_test(env_path: Path, integration_name: Optional[str] = None, skip: Optional[List[str]] = None):
     print("Validating environment...")
@@ -509,7 +539,8 @@ def decoder_health_test(env_path: Path, integration_name: Optional[str] = None, 
     print("Environment validated.")
 
     print("Starting engine...")
-    engine_handler = EngineHandler(bin_path.as_posix(), conf_path.as_posix(), override_env={CONFIG_ENV_KEYS.LOG_LEVEL.value: "warning"})
+    engine_handler = EngineHandler(bin_path.as_posix(), conf_path.as_posix(), override_env={
+                                   CONFIG_ENV_KEYS.LOG_LEVEL.value: "warning"})
 
     integrations: List[Path] = []
     CORE_WAZUH_DECODER_PATH = env_path / 'ruleset' / 'decoders' / 'wazuh-core' / 'core-wazuh-message.yml'
@@ -544,6 +575,7 @@ def decoder_health_test(env_path: Path, integration_name: Optional[str] = None, 
             load_indexer_output_in_policy(engine_handler)
         modify_core_wazuh_decoder(CORE_WAZUH_DECODER_PATH)
         update_wazuh_core_message(CORE_WAZUH_DECODER_PATH, engine_handler)
+        reload_session(engine_handler)
 
         print("\n\nRunning tests...")
         results = run_test(integrations, engine_handler.api_socket_path)
@@ -555,6 +587,8 @@ def decoder_health_test(env_path: Path, integration_name: Optional[str] = None, 
         print("Restart wazuh-core-message decoder changes")
         modify_core_wazuh_decoder(CORE_WAZUH_DECODER_PATH, add_hash=False)
         update_wazuh_core_message(CORE_WAZUH_DECODER_PATH, engine_handler)
+        reload_session(engine_handler)
+
         engine_handler.stop()
         opensearch_management.stop()
         print("Engine stopped.")
@@ -570,7 +604,6 @@ def decoder_health_test(env_path: Path, integration_name: Optional[str] = None, 
 
     if success:
         print("All tests passed.")
-        sys.exit(0)
     else:
         sys.exit(1)
 
@@ -585,13 +618,14 @@ def rule_health_test(env_path: Path, ruleset_name: Optional[str] = None, skip: O
     if not bin_path.is_file():
         sys.exit(f"Engine binary not found: {bin_path}")
 
-    rules_path = (env_path / "ruleset/rules").resolve()
-    if not rules_path.exists():
-        sys.exit(f"Rules directory not found: {rules_path}")
+    integration_rule_path = (env_path / "ruleset/integrations-rules").resolve()
+    if not integration_rule_path.exists():
+        sys.exit(f"Rules directory not found: {integration_rule_path}")
     print("Environment validated.")
 
     print("Starting engine...")
-    engine_handler = EngineHandler(bin_path.as_posix(), conf_path.as_posix(), override_env={CONFIG_ENV_KEYS.LOG_LEVEL.value: "warning"})
+    engine_handler = EngineHandler(bin_path.as_posix(), conf_path.as_posix(), override_env={
+                                   CONFIG_ENV_KEYS.LOG_LEVEL.value: "warning"})
 
     results: List[Result] = []
     rules: List[Path] = []
@@ -601,12 +635,12 @@ def rule_health_test(env_path: Path, ruleset_name: Optional[str] = None, skip: O
     try:
         if ruleset_name is not None:
             print(f"Specific ruleset: {ruleset_name}")
-            ruleset_path = rules_path / ruleset_name
+            ruleset_path = integration_rule_path / ruleset_name
             if not ruleset_path.exists():
-                sys.exit(f"Ruleset {ruleset_name} not found.")
+                sys.exit(f"Integration rule {ruleset_name} not found.")
             rules.append(ruleset_path)
         else:
-            for ruleset_path in rules_path.iterdir():
+            for ruleset_path in integration_rule_path.iterdir():
                 if not ruleset_path.is_dir():
                     continue
                 print(f'Discovered ruleset: {ruleset_path.name}')
@@ -626,6 +660,7 @@ def rule_health_test(env_path: Path, ruleset_name: Optional[str] = None, skip: O
         print("Update wazuh-core-message decoder")
         modify_core_wazuh_decoder(CORE_WAZUH_DECODER_PATH)
         update_wazuh_core_message(CORE_WAZUH_DECODER_PATH, engine_handler)
+        reload_session(engine_handler)
 
         print("\n\nRunning tests...")
         results = run_test(rules, engine_handler.api_socket_path)
@@ -637,6 +672,8 @@ def rule_health_test(env_path: Path, ruleset_name: Optional[str] = None, skip: O
         print("Restart wazuh-core-message decoder changes")
         modify_core_wazuh_decoder(CORE_WAZUH_DECODER_PATH, add_hash=False)
         update_wazuh_core_message(CORE_WAZUH_DECODER_PATH, engine_handler)
+        reload_session(engine_handler)
+
         engine_handler.stop()
         opensearch_management.stop()
         # Restore level log
@@ -655,7 +692,6 @@ def rule_health_test(env_path: Path, ruleset_name: Optional[str] = None, skip: O
 
     if success:
         print("All tests passed.")
-        sys.exit(0)
     else:
         sys.exit(1)
 
@@ -663,16 +699,16 @@ def rule_health_test(env_path: Path, ruleset_name: Optional[str] = None, skip: O
 def run(args):
     env_path = Path(args['environment'])
     integration_name = args.get('integration')
-    rule_folder = args.get('rule_folder')
+    integration_rule = args.get('integration_rule')
     target = args.get('target')
     skip = args['skip']
 
-    provided_args = sum([bool(integration_name), bool(rule_folder), bool(target)])
+    provided_args = sum([bool(integration_name), bool(integration_rule), bool(target)])
     if provided_args > 1:
-        sys.exit("It is only possible to specify one of the following arguments: 'target', 'integration' or 'rule_folder'")
+        sys.exit("It is only possible to specify one of the following arguments: 'target', 'integration' or 'integration_rule'")
 
-    if rule_folder:
-        return rule_health_test(env_path, rule_folder, skip)
+    if integration_rule:
+        return rule_health_test(env_path, integration_rule, skip)
 
     elif integration_name:
         return decoder_health_test(env_path, integration_name, skip)
@@ -681,9 +717,9 @@ def run(args):
         if target == 'decoder':
             return decoder_health_test(env_path, integration_name, skip)
         elif target == 'rule':
-            return rule_health_test(env_path, rule_folder, skip)
+            return rule_health_test(env_path, integration_rule, skip)
         else:
             sys.exit(f"The {target} target is not currently supported")
 
     else:
-        sys.exit("At least one of the following arguments must be specified: 'target', 'integration' or 'rule_folder'")
+        sys.exit("At least one of the following arguments must be specified: 'target', 'integration' or 'integration_rule'")

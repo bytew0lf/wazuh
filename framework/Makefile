@@ -4,15 +4,14 @@
 #
 # Syntax: make [ all | build | install | examples | clean ]
 
-WAZUH_USER        = wazuh
-WAZUH_GROUP       = wazuh
+WAZUH_USER        = wazuh-server
+WAZUH_GROUP       = wazuh-server
 WAZUH_SERVER	  = wazuh-server
 
 SHARE_INSTALLDIR       ?= /usr/share/${WAZUH_SERVER}
 LOG_INSTALLDIR         ?= /var/log/${WAZUH_SERVER}
 LIB_INSTALLDIR         ?= /var/lib/${WAZUH_SERVER}
 ETC_INSTALLDIR         ?= /etc/${WAZUH_SERVER}
-RUN_INSTALLDIR         ?= /run/${WAZUH_SERVER}
 BIN_INSTALLDIR         ?= ${SHARE_INSTALLDIR}/bin
 
 CC           = gcc
@@ -20,7 +19,8 @@ CFLAGS       = -pipe -Wall -Wextra
 THREAD_FLAGS = -pthread
 MV_FILE      = mv -f
 RM_FILE      = rm -f
-INSTALL_DIR  = install -o ${WAZUH_USER} -g ${WAZUH_GROUP} -m 0750  -d
+INSTALL_REGULAR_DIR  = install -o ${WAZUH_USER} -g ${WAZUH_GROUP} -m 0750  -d
+INSTALL_RESTRICTED_DIR  = install -o ${WAZUH_USER} -g ${WAZUH_GROUP} -m 0500  -d
 INSTALL_EXEC = install -o ${WAZUH_USER} -g ${WAZUH_GROUP} -m 0750
 INSTALL_FILE = install -o ${WAZUH_USER} -g ${WAZUH_GROUP} -m 0640
 
@@ -38,33 +38,22 @@ all: build
 
 install:
 	# SHARE
-	$(INSTALL_DIR) $(BIN_INSTALLDIR)
-	$(INSTALL_DIR) $(SHARE_INSTALLDIR)/framework
-	$(INSTALL_DIR) $(SHARE_INSTALLDIR)/framework/scripts
-	$(INSTALL_DIR) $(SHARE_INSTALLDIR)/framework/wazuh
-	$(INSTALL_DIR) $(SHARE_INSTALLDIR)/framework/wazuh/core/cluster
-	$(INSTALL_DIR) $(SHARE_INSTALLDIR)/framework/wazuh/core/cluster/dapi
-	$(INSTALL_DIR) $(SHARE_INSTALLDIR)/framework/wazuh/core/cluster/hap_helper
+	$(INSTALL_REGULAR_DIR) $(BIN_INSTALLDIR)
+	$(INSTALL_REGULAR_DIR) $(SHARE_INSTALLDIR)/framework
+	$(INSTALL_REGULAR_DIR) $(SHARE_INSTALLDIR)/framework/scripts
+	$(INSTALL_REGULAR_DIR) $(SHARE_INSTALLDIR)/framework/wazuh
 
 	# LOGS
-	$(INSTALL_DIR) $(LOG_INSTALLDIR)
+	$(INSTALL_REGULAR_DIR) $(LOG_INSTALLDIR)
 
 	# ETC
-	$(INSTALL_DIR) $(ETC_INSTALLDIR)
-	$(INSTALL_DIR) $(ETC_INSTALLDIR)/cluster
-	$(INSTALL_DIR) $(ETC_INSTALLDIR)/shared
-
-	# RUN
-	$(INSTALL_DIR) $(RUN_INSTALLDIR)
-	$(INSTALL_DIR) $(RUN_INSTALLDIR)/cluster
-	$(INSTALL_DIR) $(RUN_INSTALLDIR)/socket
+	$(INSTALL_REGULAR_DIR) $(ETC_INSTALLDIR)
+	$(INSTALL_RESTRICTED_DIR) $(ETC_INSTALLDIR)/certs
+	$(INSTALL_REGULAR_DIR) $(ETC_INSTALLDIR)/groups
 
 	# SHARE
-	$(INSTALL_FILE) scripts/*.py ${SHARE_INSTALLDIR}/framework/scripts
+	$(INSTALL_EXEC) scripts/wazuh_server.py ${SHARE_INSTALLDIR}/framework/scripts/wazuh-server.py
 	$(INSTALL_FILE) wazuh/*.py ${SHARE_INSTALLDIR}/framework/wazuh
-	$(INSTALL_FILE) wazuh/core/cluster/*.py ${SHARE_INSTALLDIR}/framework/wazuh/core/cluster
-	$(INSTALL_FILE) wazuh/core/cluster/dapi/*.py ${SHARE_INSTALLDIR}/framework/wazuh/core/cluster/dapi
-	$(INSTALL_FILE) wazuh/core/cluster/hap_helper/*.py ${SHARE_INSTALLDIR}/framework/wazuh/core/cluster/hap_helper
 
 	# ETC
 	$(INSTALL_FILE) ../etc/wazuh-server.yml ${ETC_INSTALLDIR}
@@ -78,7 +67,7 @@ install:
 	$(RM_FILE) ${BIN_INSTALLDIR}/__init__
 
 examples: install
-	$(INSTALL_DIR) $(INSTALLDIR)/framework/examples
+	$(INSTALL_REGULAR_DIR) $(INSTALLDIR)/framework/examples
 	$(INSTALL_EXEC) examples/*.py ${INSTALLDIR}/framework/examples
 
 clean:

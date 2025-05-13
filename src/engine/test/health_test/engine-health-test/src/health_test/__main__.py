@@ -13,10 +13,11 @@ from health_test.initial_state import run as init_run
 from health_test.load_decoders import run as load_decoders_run
 from health_test.load_rules import run as load_rules_run
 from health_test.assets_validate import run as assets_validate_run
-from health_test.decoder_mapping_validate import run as decoder_mapping_validate_run
-from health_test.rule_mapping_validate import run as rule_mapping_validate_run
 from health_test.validate_successful_assets import run as validate_successful_assets_run
-
+from health_test.validate_non_modifiables_fields import run as validate_non_modifiables_fields_run
+from health_test.validate_custom_field_documentation import run as validate_custom_field_documentation_run
+from health_test.coverage_validate import run as coverage_validate_run
+from health_test.run_all import run as run_all
 
 def parse_args() -> Namespace:
     parser = ArgumentParser(prog='engine-health-test')
@@ -24,6 +25,17 @@ def parse_args() -> Namespace:
     # dest used because of bug: https://bugs.python.org/issue29298
     subparsers = parser.add_subparsers(
         title='subcommands', required=True, dest='subcommand')
+
+    # Run all subcommand
+    run_all_parser = subparsers.add_parser(
+        'run_all', help='Run all health test')
+
+    run_all_parser.add_argument('-e', '--environment',
+                                help='Environment to run the tests in', type=str, required=True)
+    run_all_parser.add_argument('-r', '--ruleset',
+                               help='Specify the path to the ruleset directory', type=str, required=True)
+    run_all_parser.add_argument('-t', '--test-dir', help='Specify the path to the test directory', required=True)
+    run_all_parser.set_defaults(func=run_all)
 
     # Static subcommand group
     static_parser = subparsers.add_parser(
@@ -42,14 +54,15 @@ def parse_args() -> Namespace:
             'However, if you specify the target, only one is accepted.'))
     metadata_validate_parser.add_argument('--integration', help='Specify integration name', required=False)
     metadata_validate_parser.add_argument('--decoder', help='Specify decoder name', required=False)
-    metadata_validate_parser.add_argument('--rule_folder', help='Specify rule folder name', required=False)
+    metadata_validate_parser.add_argument('--integration_rule', help='Specify integration rule name', required=False)
+    metadata_validate_parser.add_argument('--rule', help='Specify rule name', required=False)
     metadata_validate_parser.set_defaults(func=metadata_validate_run)
 
     # schema validate subcommand
     schema_validate_parser = static_subparsers.add_parser(
         'schema_validate', help='Validate schema in integrations.')
     schema_validate_parser.add_argument('--integration', help='Specify integration name', required=False)
-    schema_validate_parser.add_argument('--rule_folder', help='Specify rule folder name', required=False)
+    schema_validate_parser.add_argument('--integration_rule', help='Specify integration rule name', required=False)
     schema_validate_parser.set_defaults(func=schema_validate_run)
 
     # mandatory mapping validate subcommand
@@ -57,13 +70,30 @@ def parse_args() -> Namespace:
         'mandatory_mapping_validate',
         help='Validates that mandatory mapping fields are present after the decoding stage')
     mandatory_mapping_validate_parser.add_argument('--integration', help='Specify integration name', required=False)
-    mandatory_mapping_validate_parser.add_argument('--rule_folder', help='Specify rule folder name', required=False)
+    mandatory_mapping_validate_parser.add_argument('--integration_rule', help='Specify integration rule name', required=False)
     mandatory_mapping_validate_parser.set_defaults(func=mandatory_mapping_validate_run)
 
     # event processing subcommand
     event_processing_validate_parser = static_subparsers.add_parser(
         'event_processing_validate', help='Validates that each asset in the ruleset has processed at least one event')
     event_processing_validate_parser.set_defaults(func=event_processing_run)
+
+    # non modifiables fields subcommand
+    non_modifiable_fields_validate = static_subparsers.add_parser(
+        'non_modifiable_fields_validate', help=(
+            'Validates non modifiables fields in integrations, decoders or rules '
+            'If you do not specify a specific target, all assets will be validated. '
+            'However, if you specify the target, only one is accepted.'))
+    non_modifiable_fields_validate.add_argument('--integration', help='Specify integration name', required=False)
+    non_modifiable_fields_validate.add_argument('--integration_rule', help='Specify integration rule name', required=False)
+    non_modifiable_fields_validate.set_defaults(func=validate_non_modifiables_fields_run)
+
+    # custom field documentation subcommand
+    custom_field_documentation_validate_parser = static_subparsers.add_parser(
+        'custom_field_documentation_validate', help='Validates that each field defined as custom has been properly documented')
+    custom_field_documentation_validate_parser.add_argument('--integration', help='Specify integration name', required=False)
+    custom_field_documentation_validate_parser.add_argument('--integration_rule', help='Specify rule integration name', required=False)
+    custom_field_documentation_validate_parser.set_defaults(func=validate_custom_field_documentation_run)
 
     # Dynamic subcommand group
     dynamic_parser = subparsers.add_parser(
@@ -104,7 +134,8 @@ def parse_args() -> Namespace:
             'However, if you specify the target, only one is accepted.'))
     assets_validate.add_argument('--integration', help='Specify integration name', required=False)
     assets_validate.add_argument('--decoder', help='Specify decoder name', required=False)
-    assets_validate.add_argument('--rule_folder', help='Specify the name of the rule folder to test', required=False)
+    assets_validate.add_argument('--rule', help='Specify rule name', required=False)
+    assets_validate.add_argument('--integration_rule', help='Specify integration rule name', required=False)
     assets_validate.set_defaults(func=assets_validate_run)
 
     # successful assets validate subcommand
@@ -116,7 +147,7 @@ def parse_args() -> Namespace:
     validate_successful_assets_parser.add_argument(
         '--integration', help='Specify the name of the integration to test.', default=None)
     validate_successful_assets_parser.add_argument(
-        '--rule_folder', help='Specify the name of the rule folder to test.', default=None)
+        '--integration_rule', help='Specify the name of the integration rule to test.', default=None)
     validate_successful_assets_parser.add_argument(
         '--target',
         help='Specify the asset type (decoder or rule). If it is a decoder, the tests are carried out for all decoders. The same for the rules.',
@@ -124,28 +155,6 @@ def parse_args() -> Namespace:
     validate_successful_assets_parser.add_argument(
         '--skip', help='Skip the tests with the specified name', default=None)
     validate_successful_assets_parser.set_defaults(func=validate_successful_assets_run)
-
-    # decoder mapping validate subcommand
-    validate_decoder_mapping_parser = dynamic_subparsers.add_parser(
-        'validate_decoder_mapping', help='Verifies that only certain fields are mapped in the decoders.')
-    validate_decoder_mapping_parser.add_argument(
-        '--integration',
-        help='Specify the name of the integration to test, if not specified all integration will be tested',
-        default=None)
-    validate_decoder_mapping_parser.add_argument(
-        '--skip', help='Skip the tests with the specified name', default=None)
-    validate_decoder_mapping_parser.set_defaults(func=decoder_mapping_validate_run)
-
-    # rule mapping validate subcommand
-    validate_rule_mapping_parser = dynamic_subparsers.add_parser(
-        'validate_rule_mapping', help='Verifies that only certain fields are mapped in the rules.')
-    validate_rule_mapping_parser.add_argument(
-        '--rule_folder',
-        help='Specify the name of the rule folder to test, if not specified all rules folder will be tested',
-        default=None)
-    validate_rule_mapping_parser.add_argument(
-        '--skip', help='Skip the tests with the specified name', default=None)
-    validate_rule_mapping_parser.set_defaults(func=rule_mapping_validate_run)
 
     # validate event indexing subcommand
     validate_event_indexing_parser = dynamic_subparsers.add_parser(
@@ -157,7 +166,7 @@ def parse_args() -> Namespace:
     validate_event_indexing_parser.add_argument(
         '--integration', help='Specify the name of the integration to test.', default=None)
     validate_event_indexing_parser.add_argument(
-        '--rule_folder', help='Specify the name of the rule folder to test', default=None)
+        '--integration_rule', help='Specify the name of the integration rule to test', default=None)
     validate_event_indexing_parser.add_argument(
         '--skip', help='Skip the tests with the specified name', required=False)
     validate_event_indexing_parser.add_argument(
@@ -176,7 +185,7 @@ def parse_args() -> Namespace:
     validate_custom_field_indexing_parser.add_argument(
         '--integration', help='Specify the name of the integration to test.', default=None)
     validate_custom_field_indexing_parser.add_argument(
-        '--rule_folder', help='Specify the name of the rule folder to test', default=None)
+        '--integration_rule', help='Specify the name of the integration rule to test', default=None)
     validate_custom_field_indexing_parser.add_argument(
         '--skip', help='Skip the tests with the specified name', required=False)
     validate_custom_field_indexing_parser.add_argument(
@@ -194,7 +203,7 @@ def parse_args() -> Namespace:
     test_parser.add_argument(
         '--integration', help='Specify the name of the integration to test.', default=None)
     test_parser.add_argument(
-        '--rule_folder', help='Specify the name of the rule folder to test', default=None)
+        '--integration_rule', help='Specify the name of the integration rule', default=None)
     test_parser.add_argument(
         '--skip', help='Skip the tests with the specified name', required=False)
     test_parser.add_argument(
@@ -202,6 +211,25 @@ def parse_args() -> Namespace:
         help='Specify the asset type (decoder or rule). If it is a decoder, the tests are carried out for all decoders. The same for the rules.',
         required=False)
     test_parser.set_defaults(func=test_run)
+
+    # coverage test subcommand
+    coverage_validate_parser = dynamic_subparsers.add_parser(
+        'coverage_validate', help=(
+            'A tool that measures the percentage of coverage of an asset.'
+            'With a detailed report on the successful and failed traces for each stage of the asset'))
+    coverage_validate_parser.add_argument(
+        '--integration', help='Specify the name of the integration to test.', default=None)
+    coverage_validate_parser.add_argument(
+        '--integration_rule', help='Specify the name of the rule integration to test', default=None)
+    coverage_validate_parser.add_argument(
+        '--output_file', help='Specifies the output file where the report will be stored', required=True)
+    coverage_validate_parser.add_argument(
+        '--skip', help='Skip the tests with the specified name', required=False)
+    coverage_validate_parser.add_argument(
+        '--target',
+        help='Specify the asset type (decoder or rule). If it is a decoder, the tests are carried out for all decoders. The same for the rules.',
+        required=False)
+    coverage_validate_parser.set_defaults(func=coverage_validate_run)
 
     return parser.parse_args()
 

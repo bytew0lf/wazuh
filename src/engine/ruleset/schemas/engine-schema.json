@@ -525,12 +525,20 @@
       "type": "keyword",
       "array": false
     },
+    "device.serial_number": {
+      "type": "keyword",
+      "array": false
+    },
     "dll.code_signature.digest_algorithm": {
       "type": "keyword",
       "array": false
     },
     "dll.code_signature.exists": {
       "type": "boolean",
+      "array": false
+    },
+    "dll.code_signature.flags": {
+      "type": "keyword",
       "array": false
     },
     "dll.code_signature.signing_id": {
@@ -559,6 +567,10 @@
     },
     "dll.code_signature.valid": {
       "type": "boolean",
+      "array": false
+    },
+    "dll.hash.cdhash": {
+      "type": "keyword",
       "array": false
     },
     "dll.hash.md5": {
@@ -770,6 +782,10 @@
       "array": true
     },
     "email.attachments.file.extension": {
+      "type": "keyword",
+      "array": false
+    },
+    "email.attachments.file.hash.cdhash": {
       "type": "keyword",
       "array": false
     },
@@ -1037,6 +1053,10 @@
       "type": "boolean",
       "array": false
     },
+    "file.code_signature.flags": {
+      "type": "keyword",
+      "array": false
+    },
     "file.code_signature.signing_id": {
       "type": "keyword",
       "array": false
@@ -1250,6 +1270,10 @@
       "array": false
     },
     "file.group": {
+      "type": "keyword",
+      "array": false
+    },
+    "file.hash.cdhash": {
       "type": "keyword",
       "array": false
     },
@@ -2253,6 +2277,10 @@
       "type": "boolean",
       "array": false
     },
+    "process.code_signature.flags": {
+      "type": "keyword",
+      "array": false
+    },
     "process.code_signature.signing_id": {
       "type": "keyword",
       "array": false
@@ -2625,6 +2653,14 @@
       "type": "long",
       "array": false
     },
+    "process.group.id": {
+      "type": "keyword",
+      "array": false
+    },
+    "process.group.name": {
+      "type": "keyword",
+      "array": false
+    },
     "process.group_leader.args": {
       "type": "keyword",
       "array": true
@@ -2738,6 +2774,10 @@
       "array": false
     },
     "process.group_leader.working_directory": {
+      "type": "keyword",
+      "array": false
+    },
+    "process.hash.cdhash": {
       "type": "keyword",
       "array": false
     },
@@ -2891,6 +2931,10 @@
     },
     "process.parent.code_signature.exists": {
       "type": "boolean",
+      "array": false
+    },
+    "process.parent.code_signature.flags": {
+      "type": "keyword",
       "array": false
     },
     "process.parent.code_signature.signing_id": {
@@ -3115,6 +3159,10 @@
     },
     "process.parent.group_leader.vpid": {
       "type": "long",
+      "array": false
+    },
+    "process.parent.hash.cdhash": {
+      "type": "keyword",
       "array": false
     },
     "process.parent.hash.md5": {
@@ -4325,6 +4373,10 @@
       "type": "boolean",
       "array": false
     },
+    "threat.enrichments.indicator.file.code_signature.flags": {
+      "type": "keyword",
+      "array": false
+    },
     "threat.enrichments.indicator.file.code_signature.signing_id": {
       "type": "keyword",
       "array": false
@@ -4538,6 +4590,10 @@
       "array": false
     },
     "threat.enrichments.indicator.file.group": {
+      "type": "keyword",
+      "array": false
+    },
+    "threat.enrichments.indicator.file.hash.cdhash": {
       "type": "keyword",
       "array": false
     },
@@ -5173,6 +5229,10 @@
       "type": "boolean",
       "array": false
     },
+    "threat.indicator.file.code_signature.flags": {
+      "type": "keyword",
+      "array": false
+    },
     "threat.indicator.file.code_signature.signing_id": {
       "type": "keyword",
       "array": false
@@ -5386,6 +5446,10 @@
       "array": false
     },
     "threat.indicator.file.group": {
+      "type": "keyword",
+      "array": false
+    },
+    "threat.indicator.file.hash.cdhash": {
       "type": "keyword",
       "array": false
     },
@@ -5696,6 +5760,10 @@
     "threat.indicator.geo.timezone": {
       "type": "keyword",
       "array": false
+    },
+    "threat.indicator.id": {
+      "type": "keyword",
+      "array": true
     },
     "threat.indicator.ip": {
       "type": "ip",
@@ -6585,6 +6653,70 @@
       "type": "keyword",
       "array": false
     },
+    "volume.bus_type": {
+      "type": "keyword",
+      "array": false
+    },
+    "volume.default_access": {
+      "type": "keyword",
+      "array": false
+    },
+    "volume.device_name": {
+      "type": "keyword",
+      "array": false
+    },
+    "volume.device_type": {
+      "type": "keyword",
+      "array": false
+    },
+    "volume.dos_name": {
+      "type": "keyword",
+      "array": false
+    },
+    "volume.file_system_type": {
+      "type": "keyword",
+      "array": false
+    },
+    "volume.mount_name": {
+      "type": "keyword",
+      "array": false
+    },
+    "volume.nt_name": {
+      "type": "keyword",
+      "array": false
+    },
+    "volume.product_id": {
+      "type": "keyword",
+      "array": false
+    },
+    "volume.product_name": {
+      "type": "keyword",
+      "array": false
+    },
+    "volume.removable": {
+      "type": "boolean",
+      "array": false
+    },
+    "volume.serial_number": {
+      "type": "keyword",
+      "array": false
+    },
+    "volume.size": {
+      "type": "long",
+      "array": false
+    },
+    "volume.vendor_id": {
+      "type": "keyword",
+      "array": false
+    },
+    "volume.vendor_name": {
+      "type": "keyword",
+      "array": false
+    },
+    "volume.writable": {
+      "type": "boolean",
+      "array": false
+    },
     "vulnerability.category": {
       "type": "keyword",
       "array": true
@@ -6637,23 +6769,31 @@
       "type": "keyword",
       "array": false
     },
-    "wazuh.queue": {
-      "type": "long",
-      "array": false
+    "agent.groups": {
+      "type": "keyword",
+      "array": true
     },
-    "wazuh.location": {
-      "type": "text",
-      "array": false
-    },
-    "wazuh.message": {
-      "type": "text",
-      "array": false
-    },
-    "wazuh.origin": {
+    "agent.host.hostname": {
       "type": "keyword",
       "array": false
     },
-    "wazuh.registered_ip": {
+    "agent.host.os.platform": {
+      "type": "keyword",
+      "array": false
+    },
+    "agent.host.os.name": {
+      "type": "keyword",
+      "array": false
+    },
+    "agent.host.architecture": {
+      "type": "keyword",
+      "array": false
+    },
+    "agent.host.ip": {
+      "type": "ip",
+      "array": true
+    },
+    "event.collector": {
       "type": "keyword",
       "array": false
     },
@@ -6664,114 +6804,6 @@
     "wazuh.rules": {
       "type": "keyword",
       "array": true
-    },
-    "wazuh.source": {
-      "type": "keyword",
-      "array": false
-    },
-    "wazuh.syscollector.hardware": {
-      "type": "object",
-      "array": false
-    },
-    "wazuh.syscollector.hotfix": {
-      "type": "object",
-      "array": false
-    },
-    "wazuh.syscollector.netinfo.addr": {
-      "type": "object",
-      "array": false
-    },
-    "wazuh.syscollector.netinfo.iface": {
-      "type": "object",
-      "array": false
-    },
-    "wazuh.syscollector.netinfo.proto": {
-      "type": "object",
-      "array": false
-    },
-    "wazuh.syscollector.os": {
-      "type": "object",
-      "array": false
-    },
-    "wazuh.syscollector.port": {
-      "type": "object",
-      "array": false
-    },
-    "wazuh.syscollector.process": {
-      "type": "object",
-      "array": false
-    },
-    "wazuh.syscollector.program": {
-      "type": "object",
-      "array": false
-    },
-    "wazuh.rootcheck.file": {
-      "type": "keyword",
-      "array": false
-    },
-    "wazuh.rootcheck.update": {
-      "type": "boolean",
-      "array": false
-    },
-    "wazuh.rootcheck.fts": {
-      "type": "boolean",
-      "array": false
-    },
-    "wazuh.rootcheck.title": {
-      "type": "keyword",
-      "array": false
-    },
-    "wazuh.ciscat.type": {
-      "type": "keyword",
-      "array": false
-    },
-    "wazuh.ciscat.scan_id": {
-      "type": "long",
-      "array": false
-    },
-    "wazuh.ciscat.cis.timestamp": {
-      "type": "date",
-      "array": false
-    },
-    "wazuh.ciscat.cis.benchmark": {
-      "type": "keyword",
-      "array": false
-    },
-    "wazuh.ciscat.cis.profile": {
-      "type": "keyword",
-      "array": false
-    },
-    "wazuh.ciscat.cis.pass": {
-      "type": "long",
-      "array": false
-    },
-    "wazuh.ciscat.cis.fail": {
-      "type": "long",
-      "array": false
-    },
-    "wazuh.ciscat.cis.error": {
-      "type": "long",
-      "array": false
-    },
-    "wazuh.ciscat.cis.notchecked": {
-      "type": "long",
-      "array": false
-    },
-    "wazuh.ciscat.cis.unknown": {
-      "type": "long",
-      "array": false
-    },
-    "wazuh.ciscat.cis.score": {
-      "type": "long",
-      "array": false
-    },
-    "wazuh.ciscat.cis.hostname": {
-      "type": "keyword",
-      "array": false
-    },
-    "wazuh.noIndexing": {
-      "type": "boolean",
-      "array": false
     }
   }
 }

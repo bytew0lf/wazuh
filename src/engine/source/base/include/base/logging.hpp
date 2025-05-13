@@ -209,8 +209,10 @@ void stop();
 
 /**
  * @brief Initializes the logger for testing purposes.
+ *
+ * @param lvl Log level to set.
  */
-void testInit();
+void testInit(Level lvl = Level::Warn);
 
 inline std::string getLambdaName(const char* parentScope, const std::string& lambdaName)
 {
@@ -244,9 +246,6 @@ inline std::string getLambdaName(const char* parentScope, const std::string& lam
 #define LOG_DEBUG_L(functionName, msg, ...)                                                                            \
     logging::getDefaultLogger()->log(                                                                                  \
         spdlog::source_loc {__FILE__, __LINE__, functionName}, spdlog::level::debug, msg, ##__VA_ARGS__)
-#define LOG_TRACE_L(functionName, msg, ...)                                                                            \
-    logging::getDefaultLogger()->log(                                                                                  \
-        spdlog::source_loc {__FILE__, __LINE__, functionName}, spdlog::level::trace, msg, ##__VA_ARGS__)
 #define LOG_INFO_L(functionName, msg, ...)                                                                             \
     logging::getDefaultLogger()->log(                                                                                  \
         spdlog::source_loc {__FILE__, __LINE__, functionName}, spdlog::level::info, msg, ##__VA_ARGS__)

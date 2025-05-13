@@ -16,7 +16,7 @@ from api_utils.commands import engine_clear
 
 ENGINE_DIR = os.environ.get("ENGINE_DIR", "")
 ENV_DIR = os.environ.get("ENV_DIR", "")
-SOCKET_PATH = ENV_DIR + "/queue/sockets/engine-api"
+SOCKET_PATH = ENV_DIR + "/queue/sockets/engine-api.socket"
 RULESET_DIR = ENV_DIR + "/engine"
 
 api_client = APIClient(SOCKET_PATH)
@@ -31,6 +31,9 @@ def run_command(command):
 def send_recv(request, expected_response_type) -> Tuple[Optional[str], dict]:
     try:
         error, response = api_client.send_recv(request)
+        print(f'Request: {request}')
+        print(f"Error: {error}")
+        print(f"Response: {response}")
         assert error is None, f"{error}"
         parse_response = ParseDict(response, expected_response_type)
         if parse_response.status == api_engine.ERROR:
@@ -198,19 +201,37 @@ def step_impl(context, policy_name: str):
     delete_policy(policy_name)
 
 
-@when('I send a request to send the event "{message}" from "{session_name}" session with "{debug_level}" debug "{namespace}" namespace, queue "{queue_char}" and "{asset_trace}" asset trace')
+@when('I send a request to send the event "{message}" from "{session_name}" session with "{debug_level}" debug "{namespace}" namespace, agent.name "{queue_char}" and "{asset_trace}" asset trace')
 def step_impl(context, message: str, session_name: str, debug_level: str, queue_char: str, namespace: str, asset_trace: str):
     debug_level_to_int = {
         "NONE": 0,
         "ASSET_ONLY": 1,
         "ALL": 2
     }
+
+    json_event : dict = {
+        "event": {
+            "original": message
+        }
+    }
+    header_json_event : dict = {
+        "agent": {
+            "name": "header-agent",
+            "id": queue_char
+        }
+    }
+    subheader_json_event : dict = {
+        "collector": "file",
+        "module": "logcollector"
+    }
+    str_json_event = json.dumps(json_event, separators=(",", ":"))
+    str_header_json_event = json.dumps(header_json_event, separators=(",", ":"))
+    str_subheader_json_event = json.dumps(subheader_json_event, separators=(",", ":"))
+
     request = api_tester.RunPost_Request()
     request.name = session_name
     request.trace_level = debug_level_to_int[debug_level]
-    request.message = message
-    request.queue = queue_char
-    request.location = "any"
+    request.ndjson_event = str_header_json_event + "\n" + str_subheader_json_event + "\n" + str_json_event
     request.namespaces.extend([namespace])
     request.asset_trace.extend([asset_trace])
     error, context.result = send_recv(request, api_tester.RunPost_Response())

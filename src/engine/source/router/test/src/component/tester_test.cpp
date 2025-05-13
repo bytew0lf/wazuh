@@ -111,7 +111,7 @@ void expectBuildPolicyOk(std::shared_ptr<builder::mocks::MockBuilder> mockbuilde
                          std::shared_ptr<builder::mocks::MockPolicy> mockPolicy)
 {
     // Build policy controller
-    EXPECT_CALL(*mockbuilder, buildPolicy(testing::_)).WillOnce(testing::Return(mockPolicy));
+    EXPECT_CALL(*mockbuilder, buildPolicy(testing::_, testing::_, testing::_)).WillOnce(testing::Return(mockPolicy));
     auto emptyNames = std::unordered_set<base::Name> {"asset/test/0"};
     EXPECT_CALL(*mockPolicy, assets()).WillRepeatedly(testing::ReturnRefOfCopy(emptyNames));
     auto emptyExpression = base::Expression {};
@@ -311,7 +311,9 @@ TEST_F(OrchestratorTesterTest, IngestTest)
     EXPECT_CALL(*m_mockQueueRouter, empty()).WillOnce(testing::Return(true));
     EXPECT_CALL(*m_mockQueueRouter, push(testing::_)).Times(1);
 
-    auto resultFuture = m_orchestrator->ingestTest("1:any:message", opt);
+    auto event = std::make_shared<json::Json>(R"({"message":"test"})");
+
+    auto resultFuture = m_orchestrator->ingestTest(std::move(event), opt);
 
     m_orchestrator->stop();
 }

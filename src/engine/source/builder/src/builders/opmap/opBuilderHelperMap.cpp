@@ -32,7 +32,7 @@ constexpr auto TRACE_REFERENCE_NOT_FOUND = "[{}] -> Failure: Parameter '{}' refe
 constexpr auto TRACE_REFERENCE_TYPE_IS_NOT = "[{}] -> Failure: Parameter '{}' type is not ";
 
 /**
- * @brief Operators supported by the string helpers.
+ * @brief NumberOperators supported by the string helpers.
  *
  */
 enum class StringOperator
@@ -43,10 +43,10 @@ enum class StringOperator
 };
 
 /**
- * @brief Operators supported by the int helpers.
+ * @brief NumberOperators supported by the int helpers.
  *
  */
-enum class IntOperator
+enum class NumberOperator
 {
     SUM,
     SUB,
@@ -54,24 +54,48 @@ enum class IntOperator
     DIV
 };
 
-IntOperator strToOp(const std::string& op)
+NumberOperator strToOp(const std::string& op)
 {
     if ("sum" == op)
     {
-        return IntOperator::SUM;
+        return NumberOperator::SUM;
     }
     else if ("sub" == op)
     {
-        return IntOperator::SUB;
+        return NumberOperator::SUB;
     }
     else if ("mul" == op)
     {
-        return IntOperator::MUL;
+        return NumberOperator::MUL;
     }
     else if ("div" == op)
     {
-        return IntOperator::DIV;
+        return NumberOperator::DIV;
     }
+    throw std::runtime_error(fmt::format("Operation '{}' not supported", op));
+}
+
+/**
+ * @brief Operators supported by the int helpers.
+ *
+ */
+enum class NumCastOperator
+{
+    TRUNCATE,
+    ROUND
+};
+
+NumCastOperator strToNumCastOp(const std::string& op)
+{
+    if ("truncate" == op)
+    {
+        return NumCastOperator::TRUNCATE;
+    }
+    else if ("round" == op)
+    {
+        return NumCastOperator::ROUND;
+    }
+
     throw std::runtime_error(fmt::format("Operation '{}' not supported", op));
 }
 
@@ -200,7 +224,7 @@ MapOp opBuilderHelperStringTransformation(const std::vector<OpArg>& opArgs,
  * - `DIV`: Divide
  * @return base::Expression
  */
-MapOp opBuilderHelperIntTransformation(IntOperator op,
+MapOp opBuilderHelperIntTransformation(NumberOperator op,
                                        const std::vector<OpArg>& opArgs,
                                        const std::shared_ptr<const IBuildCtx>& buildCtx)
 {
@@ -216,6 +240,7 @@ MapOp opBuilderHelperIntTransformation(IntOperator op,
 
     // Depending on rValue type we store the reference or the integer value, avoiding
     // iterating again through values inside lambda
+    bool isFirstOperand = true;
     for (const auto& arg : opArgs)
     {
         int64_t rValue {};
@@ -230,10 +255,13 @@ MapOp opBuilderHelperIntTransformation(IntOperator op,
 
             rValue = asValue->value().getIntAsInt64().value();
 
-            if (IntOperator::DIV == op && 0 == rValue) // Only the first value can be 0 and the result always will be 0
+            if (NumberOperator::DIV == op && !isFirstOperand
+                && 0 == rValue) // Only the first value can be 0 and the result always will be 0
             {
                 throw std::runtime_error("Division by zero is not allowed");
             }
+
+            isFirstOperand = false;
 
             getOperandFn.emplace_back([rValue](base::ConstEvent) -> int64_t { return rValue; });
         }
@@ -263,6 +291,8 @@ MapOp opBuilderHelperIntTransformation(IntOperator op,
 
                     return resolvedRValue.value();
                 });
+
+            isFirstOperand = false;
         }
     }
 
@@ -270,7 +300,7 @@ MapOp opBuilderHelperIntTransformation(IntOperator op,
     std::function<int64_t(int64_t l, int64_t r)> transformFunction;
     switch (op)
     {
-        case IntOperator::SUM:
+        case NumberOperator::SUM:
             transformFunction = [overflowFailureTrace](int64_t l, int64_t r)
             {
                 bool overflow = (r > 0) && (l > std::numeric_limits<int64_t>::max() - r);
@@ -284,7 +314,7 @@ MapOp opBuilderHelperIntTransformation(IntOperator op,
                 return l + r;
             };
             break;
-        case IntOperator::SUB:
+        case NumberOperator::SUB:
             transformFunction = [overflowFailureTrace](int64_t l, int64_t r)
             {
                 bool overflow = (r < 0) && (l > std::numeric_limits<int64_t>::max() + r);
@@ -298,7 +328,7 @@ MapOp opBuilderHelperIntTransformation(IntOperator op,
                 return l - r;
             };
             break;
-        case IntOperator::MUL:
+        case NumberOperator::MUL:
             transformFunction = [overflowFailureTrace](int64_t l, int64_t r)
             {
                 bool overflow = (l > 0) && (r > 0) && (l > std::numeric_limits<int64_t>::max() / r);
@@ -313,7 +343,7 @@ MapOp opBuilderHelperIntTransformation(IntOperator op,
                 return l * r;
             };
             break;
-        case IntOperator::DIV:
+        case NumberOperator::DIV:
             transformFunction = [name, overflowFailureTrace](int64_t l, int64_t r)
             {
                 if (0 == r)
@@ -357,6 +387,186 @@ MapOp opBuilderHelperIntTransformation(IntOperator op,
 
         json::Json result;
         result.setInt64(res);
+        RETURN_SUCCESS(runState, result, successTrace);
+    };
+}
+
+/**
+ * @brief Tranform the number in `field` path in the base::Event `e` according to the
+ * `op` definition and the `value` or the `refValue`
+ *
+ * @param definition The transformation definition. i.e :
+ * +float_calculate/[+|-|*|/]/<val1|$ref1>/<.../valN|$refN>/
+ * @param op The operator to use:
+ * - `SUM`: Sum
+ * - `SUB`: Subtract
+ * - `MUL`: Multiply
+ * - `DIV`: Divide
+ * @return base::Expression
+ */
+MapOp opBuilderHelperFloatTransformation(NumberOperator op,
+                                         const std::vector<OpArg>& opArgs,
+                                         const std::shared_ptr<const IBuildCtx>& buildCtx)
+{
+    std::vector<std::function<double(base::ConstEvent)>> getOperandFn {}; // Throws on error
+
+    // Tracing messages
+    const auto name = buildCtx->context().opName;
+    const std::string successTrace {fmt::format(TRACE_SUCCESS, name)};
+    const std::string failureTrace2 {fmt::format(R"([{}] -> Failure: Reference not found or not a number: )", name)};
+    const std::string failureTrace3 = fmt::format(R"([{}] -> Failure: Parameter value makes division by zero: )", name);
+    const std::string overflowFailureTrace =
+        fmt::format(R"([{}] -> Failure: operation result in float Overflown)", name);
+
+    // Depending on rValue type we store the reference or the integer value, avoiding
+    // iterating again through values inside lambda
+    bool isFirstOperand = true;
+    for (const auto& arg : opArgs)
+    {
+        double rValue {};
+        if (arg->isValue())
+        {
+            const auto& asValue = std::static_pointer_cast<Value>(arg);
+            if (const auto opNum = asValue->value().getIntAsInt64(); opNum.has_value())
+            {
+                rValue = static_cast<double>(opNum.value());
+            }
+            else if (const auto opNum = asValue->value().getDouble(); opNum.has_value())
+            {
+                rValue = opNum.value();
+            }
+            else
+            {
+                throw std::runtime_error(
+                    fmt::format("Expected 'number' parameter but got type '{}'", asValue->value().typeName()));
+            }
+
+            if (NumberOperator::DIV == op && !isFirstOperand
+                && 0 == rValue) // Only the first value can be 0 and the result always will be 0
+            {
+                throw std::runtime_error("Division by zero is not allowed");
+            }
+
+            isFirstOperand = false;
+
+            getOperandFn.emplace_back([rValue](base::ConstEvent) -> double { return rValue; });
+        }
+        else
+        {
+            auto ref = std::static_pointer_cast<Reference>(arg);
+            if (buildCtx->validator().hasField(ref->dotPath()))
+            {
+                auto sType = buildCtx->validator().getType(ref->dotPath());
+                if (typeToJType(sType) != json::Json::Type::Number)
+                {
+                    throw std::runtime_error(fmt::format("Expected a number reference but got "
+                                                         "reference '{}' of type '{}'",
+                                                         ref->dotPath(),
+                                                         schemf::typeToStr(sType)));
+                }
+            }
+
+            getOperandFn.emplace_back(
+                [ref, failureTrace2](base::ConstEvent event) -> double
+                {
+                    if (const auto opNum = event->getIntAsInt64(ref->jsonPath()); opNum.has_value())
+                    {
+                        return static_cast<double>(opNum.value());
+                    }
+
+                    if (const auto opNum = event->getDouble(ref->jsonPath()); opNum.has_value())
+                    {
+                        return opNum.value();
+                    }
+
+                    throw std::runtime_error(failureTrace2 + ref->dotPath());
+                });
+
+            isFirstOperand = false;
+        }
+    }
+
+    // Depending on the operator we return the correct function
+    std::function<double(double l, double r)> transformFunction;
+    switch (op)
+    {
+        case NumberOperator::SUM:
+            transformFunction = [overflowFailureTrace](double l, double r)
+            {
+                double result = l + r;
+                if (std::isinf(result) || std::isnan(result))
+                {
+                    throw std::runtime_error(overflowFailureTrace);
+                }
+                return result;
+            };
+            break;
+        case NumberOperator::SUB:
+            transformFunction = [overflowFailureTrace](double l, double r)
+            {
+                double result = l - r;
+                if (std::isinf(result) || std::isnan(result))
+                {
+                    throw std::runtime_error(overflowFailureTrace);
+                }
+                return result;
+            };
+            break;
+        case NumberOperator::MUL:
+            transformFunction = [overflowFailureTrace](double l, double r)
+            {
+                double result = l * r;
+                if (std::isinf(result) || std::isnan(result))
+                {
+                    throw std::runtime_error(overflowFailureTrace);
+                }
+                return result;
+            };
+            break;
+        case NumberOperator::DIV:
+            transformFunction = [name, overflowFailureTrace](double l, double r)
+            {
+                if (0.0f == r)
+                {
+                    throw std::runtime_error(fmt::format(R"("{}" function: Division by zero)", name));
+                }
+                else
+                {
+                    return l / r;
+                }
+            };
+            break;
+        default: break;
+    }
+
+    if (getOperandFn.size() < 2)
+    {
+        throw std::runtime_error("Expected at least two operands");
+    }
+
+    // Function that implements the helper
+    return [=, runState = buildCtx->runState(), getOperandFn = std::move(getOperandFn)](
+               base::ConstEvent event) -> MapResult
+    {
+        double res = 0.0;
+        try
+        {
+            std::vector<double> auxVector {};
+            double leftOp = getOperandFn[0](event);
+            // Skip the first element
+            for (size_t i = 1; i < getOperandFn.size(); i++)
+            {
+                auxVector.emplace_back(getOperandFn[i](event));
+            }
+            res = std::accumulate(auxVector.begin(), auxVector.end(), leftOp, transformFunction);
+        }
+        catch (const std::runtime_error& e)
+        {
+            RETURN_FAILURE(runState, json::Json {}, e.what());
+        }
+
+        json::Json result;
+        result.setDouble(res);
         RETURN_SUCCESS(runState, result, successTrace);
     };
 }
@@ -432,6 +642,13 @@ TransformOp opBuilderHelperStringTrim(const Reference& targetField,
                                       const std::vector<OpArg>& opArgs,
                                       const std::shared_ptr<const IBuildCtx>& buildCtx)
 {
+    // Check Allowed field
+    const auto assetType = base::Name(buildCtx->context().assetName).parts().front();
+    if (!buildCtx->allowedFields().check(assetType, targetField.dotPath()))
+    {
+        throw std::runtime_error(fmt::format("Field '{}' is not allowed", targetField.dotPath()));
+    }
+
     // Assert expected number of parameters
     builder::builders::utils::assertSize(opArgs, 2);
     // Parameter type check
@@ -521,6 +738,85 @@ TransformOp opBuilderHelperStringTrim(const Reference& targetField,
         event->setString(strToTrim, targetField);
 
         RETURN_SUCCESS(runState, event, successTrace);
+    };
+}
+
+// field: +to_int/number/option
+MapOp opBuilderHelperToInt(const std::vector<OpArg>& opArgs, const std::shared_ptr<const IBuildCtx>& buildCtx)
+{
+    // Assert expected number of parameters
+    builder::builders::utils::assertSize(opArgs, 1, 2);
+
+    // Parameter type check
+    builder::builders::utils::assertRef(opArgs, 0);
+
+    // default operation
+    auto op = NumCastOperator::TRUNCATE;
+
+    if (opArgs.size() > 1)
+    {
+        builder::builders::utils::assertValue(opArgs, 1);
+
+        if (!std::static_pointer_cast<Value>(opArgs[1])->value().isString())
+        {
+            throw std::runtime_error(fmt::format("Expected 'string' parameter but got type '{}'",
+                                                 std::static_pointer_cast<Value>(opArgs[1])->value().typeName()));
+        }
+
+        op = strToNumCastOp(std::static_pointer_cast<Value>(opArgs[1])->value().getString().value());
+    }
+
+    const auto ref = std::static_pointer_cast<Reference>(opArgs[0]);
+    if (buildCtx->validator().hasField(ref->dotPath()))
+    {
+        auto sType = buildCtx->validator().getType(ref->dotPath());
+        if (typeToJType(sType) != json::Json::Type::Number)
+        {
+            throw std::runtime_error(fmt::format("Expected number reference but got reference '{}' of type '{}'",
+                                                 ref->dotPath(),
+                                                 schemf::typeToStr(sType)));
+        }
+    }
+
+    // Format name for the tracer
+    const auto name = buildCtx->context().opName;
+
+    // Tracing messages
+    const std::string successTrace {fmt::format(TRACE_SUCCESS, name)};
+    const std::string failureTrace1 {fmt::format(TRACE_REFERENCE_NOT_FOUND, name, ref->dotPath())};
+    const std::string failureTrace2 {fmt::format("{} -> Reference '{}' is not a number", name, ref->dotPath())};
+
+    return [failureTrace1, failureTrace2, successTrace, op, ref, runState = buildCtx->runState()](
+               base::ConstEvent event) -> MapResult
+    {
+        auto object = event->getJson(ref->jsonPath());
+        if (!object.has_value())
+        {
+            RETURN_FAILURE(runState, json::Json {}, failureTrace1);
+        }
+
+        if (!object.value().isNumber())
+        {
+            RETURN_FAILURE(runState, json::Json {}, failureTrace2);
+        }
+
+        int64_t res;
+        if (const auto val = object->getIntAsInt64(); val.has_value())
+        {
+            res = val.value();
+        }
+        else if (op == NumCastOperator::TRUNCATE)
+        {
+            res = static_cast<int64_t>(object->getFloat().value_or(object->getDouble().value()));
+        }
+        else
+        {
+            res = static_cast<int64_t>(std::round(object->getFloat().value_or(object->getDouble().value())));
+        }
+
+        json::Json result;
+        result.setInt64(res);
+        RETURN_SUCCESS(runState, result, successTrace);
     };
 }
 
@@ -879,6 +1175,13 @@ TransformOp opBuilderHelperStringReplace(const Reference& targetField,
                                          const std::vector<OpArg>& opArgs,
                                          const std::shared_ptr<const IBuildCtx>& buildCtx)
 {
+    // Check Allowed field
+    const auto assetType = base::Name(buildCtx->context().assetName).parts().front();
+    if (!buildCtx->allowedFields().check(assetType, targetField.dotPath()))
+    {
+        throw std::runtime_error(fmt::format("Field '{}' is not allowed", targetField.dotPath()));
+    }
+
     // Assert expected number of parameters
     builder::builders::utils::assertSize(opArgs, 2);
     builder::builders::utils::assertValue(opArgs);
@@ -1000,23 +1303,36 @@ MapOp opBuilderHelperNumberToString(const std::vector<OpArg>& opArgs, const std:
 }
 
 // field: +int_calculate/[+|-|*|/]/<val1|$ref1>/.../<valN|$refN>
-MapOp opBuilderHelperIntCalc(const std::vector<OpArg>& opArgs, const std::shared_ptr<const IBuildCtx>& buildCtx)
+// field: +float_calculate/[+|-|*|/]/<val1|$ref1>/.../<valN|$refN>
+MapBuilder getOpBuilderHelperCalc(bool intCalc)
 {
-    // Assert expected number of parameters
-    builder::builders::utils::assertSize(opArgs, 2, builder::builders::utils::MAX_OP_ARGS);
-    // Parameter type check
-    builder::builders::utils::assertValue(opArgs, 0);
-    if (!std::static_pointer_cast<Value>(opArgs[0])->value().isString())
+    return [intCalc](const std::vector<OpArg>& opArgs, const std::shared_ptr<const IBuildCtx>& buildCtx) -> MapOp
     {
-        throw std::runtime_error(fmt::format("Expected 'string' parameter but got type '{}'",
-                                             std::static_pointer_cast<Value>(opArgs[0])->value().typeName()));
-    }
+        // Assert expected number of parameters
+        builder::builders::utils::assertSize(opArgs, 2, builder::builders::utils::MAX_OP_ARGS);
+        // Parameter type check
+        builder::builders::utils::assertValue(opArgs, 0);
+        if (!std::static_pointer_cast<Value>(opArgs[0])->value().isString())
+        {
+            throw std::runtime_error(fmt::format("Expected 'string' parameter but got type '{}'",
+                                                 std::static_pointer_cast<Value>(opArgs[0])->value().typeName()));
+        }
 
-    auto op = strToOp(std::static_pointer_cast<Value>(opArgs[0])->value().getString().value());
+        auto op = strToOp(std::static_pointer_cast<Value>(opArgs[0])->value().getString().value());
 
-    auto newArgs = std::vector<OpArg>(opArgs.begin() + 1, opArgs.end());
-    auto mapOp = opBuilderHelperIntTransformation(op, newArgs, buildCtx);
-    return mapOp;
+        auto newArgs = std::vector<OpArg>(opArgs.begin() + 1, opArgs.end());
+        builder::builders::MapOp mapOp;
+        if (intCalc)
+        {
+            mapOp = opBuilderHelperIntTransformation(op, newArgs, buildCtx);
+        }
+        else
+        {
+            mapOp = opBuilderHelperFloatTransformation(op, newArgs, buildCtx);
+        }
+
+        return mapOp;
+    };
 }
 
 //*************************************************
@@ -1097,6 +1413,13 @@ TransformOp opBuilderHelperMergeRecursively(const Reference& targetField,
                                             const std::vector<OpArg>& opArgs,
                                             const std::shared_ptr<const IBuildCtx>& buildCtx)
 {
+    // Check Allowed field
+    const auto assetType = base::Name(buildCtx->context().assetName).parts().front();
+    if (!buildCtx->allowedFields().check(assetType, targetField.dotPath()))
+    {
+        throw std::runtime_error(fmt::format("Field '{}' is not allowed", targetField.dotPath()));
+    }
+
     // Assert expected number of parameters
     builder::builders::utils::assertSize(opArgs, 1);
     // Parameter type check
@@ -1111,11 +1434,15 @@ TransformOp opBuilderHelperMergeRecursively(const Reference& targetField,
     const auto failureTrace2 = fmt::format("{} -> Source field '{}' not found", name, refField.dotPath());
     const auto failureTrace3 = fmt::format("{} -> Field types do not match", name);
     const auto failureTrace4 = fmt::format("{} -> Field types not supported", name);
+    const auto failureTrace5 = fmt::format(
+        "{} -> Cannot map subfields of {} because is not allowed for {}", name, targetField.dotPath(), assetType);
 
     // Return Op
     return [=,
             runState = buildCtx->runState(),
             targetField = targetField.jsonPath(),
+            targetFieldDotPath = targetField.dotPath(),
+            allowedFields = buildCtx->allowedFieldsPtr(),
             fieldReference = refField.jsonPath()](base::Event event) -> TransformResult
     {
         // Check target and reference field exists
@@ -1138,6 +1465,19 @@ TransformOp opBuilderHelperMergeRecursively(const Reference& targetField,
         if (targetType != json::Json::Type::Array && targetType != json::Json::Type::Object)
         {
             RETURN_FAILURE(runState, event, failureTrace4);
+        }
+
+        if (targetType == json::Json::Type::Object)
+        {
+            auto ref = event->getJson(fieldReference).value();
+            auto fields = ref.getFields().value();
+            for (const auto& field : fields)
+            {
+                if (!allowedFields->check(assetType, DotPath::append(targetFieldDotPath, field)))
+                {
+                    RETURN_FAILURE(runState, event, failureTrace5)
+                }
+            }
         }
 
         // Merge
@@ -1182,6 +1522,13 @@ TransformOp opBuilderHelperAppendSplitString(const Reference& targetField,
                                              const std::vector<OpArg>& opArgs,
                                              const std::shared_ptr<const IBuildCtx>& buildCtx)
 {
+    // Check Allowed field
+    const auto assetType = base::Name(buildCtx->context().assetName).parts().front();
+    if (!buildCtx->allowedFields().check(assetType, targetField.dotPath()))
+    {
+        throw std::runtime_error(fmt::format("Field '{}' is not allowed", targetField.dotPath()));
+    }
+
     // Assert expected number of parameters
     builder::builders::utils::assertSize(opArgs, 2);
     // Parameter type check
@@ -1249,6 +1596,13 @@ TransformOp opBuilderHelperMerge(const Reference& targetField,
                                  const std::vector<OpArg>& opArgs,
                                  const std::shared_ptr<const IBuildCtx>& buildCtx)
 {
+    // Check Allowed field
+    const auto assetType = base::Name(buildCtx->context().assetName).parts().front();
+    if (!buildCtx->allowedFields().check(assetType, targetField.dotPath()))
+    {
+        throw std::runtime_error(fmt::format("Field '{}' is not allowed", targetField.dotPath()));
+    }
+
     // Assert expected number of parameters
     builder::builders::utils::assertSize(opArgs, 1);
     // Parameter type check
@@ -1263,11 +1617,15 @@ TransformOp opBuilderHelperMerge(const Reference& targetField,
     const auto failureTrace2 = fmt::format("{} -> Source field '{}' not found", name, refField.dotPath());
     const auto failureTrace3 = fmt::format("{} -> Field types do not match", name);
     const auto failureTrace4 = fmt::format("{} -> Field types not supported", name);
+    const auto failureTrace5 = fmt::format(
+        "{} -> Cannot map subfields of {} because is not allowed for {}", name, targetField.dotPath(), assetType);
 
     // Return Op
     return [=,
             runState = buildCtx->runState(),
             targetField = targetField.jsonPath(),
+            targetFieldDotPath = targetField.dotPath(),
+            allowedFields = buildCtx->allowedFieldsPtr(),
             fieldReference = refField.jsonPath()](base::Event event) -> TransformResult
     {
         // Check target and reference field exists
@@ -1292,6 +1650,19 @@ TransformOp opBuilderHelperMerge(const Reference& targetField,
             RETURN_FAILURE(runState, event, failureTrace4);
         }
 
+        if (targetType == json::Json::Type::Object)
+        {
+            auto ref = event->getJson(fieldReference).value();
+            auto fields = ref.getFields().value();
+            for (const auto& field : fields)
+            {
+                if (!allowedFields->check(assetType, DotPath::append(targetFieldDotPath, field)))
+                {
+                    RETURN_FAILURE(runState, event, failureTrace5)
+                }
+            }
+        }
+
         // Merge
         event->merge(json::NOT_RECURSIVE, fieldReference, targetField);
 
@@ -1308,6 +1679,12 @@ TransformOp opBuilderHelperDeleteField(const Reference& targetField,
                                        const std::vector<OpArg>& opArgs,
                                        const std::shared_ptr<const IBuildCtx>& buildCtx)
 {
+    // Check Allowed field
+    const auto assetType = base::Name(buildCtx->context().assetName).parts().front();
+    if (!buildCtx->allowedFields().check(assetType, targetField.dotPath()))
+    {
+        throw std::runtime_error(fmt::format("Field '{}' is not allowed", targetField.dotPath()));
+    }
 
     // Assert expected number of parameters
     builder::builders::utils::assertSize(opArgs, 0);
@@ -1356,6 +1733,18 @@ TransformOp opBuilderHelperRenameField(const Reference& targetField,
     builder::builders::utils::assertRef(opArgs);
 
     const auto& srcField = *std::static_pointer_cast<Reference>(opArgs[0]);
+
+    // Check Allowed field
+    const auto assetType = base::Name(buildCtx->context().assetName).parts().front();
+    if (!buildCtx->allowedFields().check(assetType, srcField.dotPath()))
+    {
+        throw std::runtime_error(fmt::format("Field '{}' is not allowed", srcField.dotPath()));
+    }
+
+    if (!buildCtx->allowedFields().check(assetType, targetField.dotPath()))
+    {
+        throw std::runtime_error(fmt::format("Field '{}' is not allowed", targetField.dotPath()));
+    }
 
     // Format name for the tracer
     const auto name = buildCtx->context().opName;
@@ -1582,6 +1971,36 @@ MapOp opBuilderHelperDateFromEpochTime(const std::vector<OpArg>& opArgs,
     };
 }
 
+// field:  get_date
+MapOp opBuilderHelperGetDate(const std::vector<OpArg>& opArgs, const std::shared_ptr<const IBuildCtx>& buildCtx)
+{
+    // Check parameters
+    utils::assertSize(opArgs, 0);
+
+    // Tracing
+    const auto name = buildCtx->context().opName;
+    const auto successTrace = fmt::format("{} -> Success", name);
+    const auto failureTrace = fmt::format("{} -> Failed to generate current date", name);
+
+    // Return Op
+    return [=, runState = buildCtx->runState()](base::ConstEvent event) -> MapResult
+    {
+        // Get the current time point
+        auto now = std::chrono::system_clock::now();
+        auto tp = date::floor<std::chrono::seconds>(now);
+        auto result = date::format("%Y-%m-%dT%H:%M:%SZ", tp);
+
+        if (result.empty())
+        {
+            RETURN_FAILURE(runState, json::Json {}, failureTrace);
+        }
+
+        json::Json resultJson;
+        resultJson.setString(result);
+        RETURN_SUCCESS(runState, resultJson, successTrace);
+    };
+}
+
 //*************************************************
 //*              Checksum and hash                *
 //*************************************************
@@ -1648,8 +2067,16 @@ MapOp opBuilderHelperHashSHA1(const std::vector<OpArg>& opArgs, const std::share
 TransformOp opBuilderHelperGetValueGeneric(const Reference& targetField,
                                            const std::vector<OpArg>& opArgs,
                                            const std::shared_ptr<const IBuildCtx>& buildCtx,
-                                           bool isMerge)
+                                           bool isMerge,
+                                           bool isRecursive)
 {
+    // Check Allowed field
+    const auto assetType = base::Name(buildCtx->context().assetName).parts().front();
+    if (!buildCtx->allowedFields().check(assetType, targetField.dotPath()))
+    {
+        throw std::runtime_error(fmt::format("Field '{}' is not allowed", targetField.dotPath()));
+    }
+
     // TODO: add runtime validation
     // Assert expected number of parameters
     builder::builders::utils::assertSize(opArgs, 2);
@@ -1724,11 +2151,15 @@ TransformOp opBuilderHelperGetValueGeneric(const Reference& targetField,
     const auto failureTrace6 = fmt::format("{} -> Key not found", name);
     const auto failureTrace7 = fmt::format("{} -> Merge error: ", name);
     const auto failureTrace8 = fmt::format("{} -> Validator error: ", name);
+    const auto failureTrace9 = fmt::format(
+        "{} -> Cannot map subfields of {} because is not allowed for {}", name, targetField.dotPath(), assetType);
 
     // Return Op
     return [=,
             runState = buildCtx->runState(),
             targetField = targetField.jsonPath(),
+            targetFieldDotPath = targetField.dotPath(),
+            allowedFields = buildCtx->allowedFieldsPtr(),
             parameter = opArgs[0],
             key = keyRef.jsonPath()](base::Event event) -> TransformResult
     {
@@ -1796,6 +2227,18 @@ TransformOp opBuilderHelperGetValueGeneric(const Reference& targetField,
             }
         }
 
+        if (resolvedValue.value().isObject())
+        {
+            auto fields = resolvedValue.value().getFields().value();
+            for (const auto& field : fields)
+            {
+                if (!allowedFields->check(assetType, DotPath::append(targetFieldDotPath, field)))
+                {
+                    RETURN_FAILURE(runState, event, failureTrace9)
+                }
+            }
+        }
+
         if (!isMerge)
         {
             event->set(targetField, resolvedValue.value());
@@ -1804,7 +2247,7 @@ TransformOp opBuilderHelperGetValueGeneric(const Reference& targetField,
         {
             try
             {
-                event->merge(json::NOT_RECURSIVE, resolvedValue.value(), targetField);
+                event->merge(isRecursive ? json::RECURSIVE : json::NOT_RECURSIVE, resolvedValue.value(), targetField);
             }
             catch (std::runtime_error& e)
             {
@@ -1830,6 +2273,14 @@ TransformOp opBuilderHelperMergeValue(const Reference& targetField,
                                       const std::shared_ptr<const IBuildCtx>& buildCtx)
 {
     return opBuilderHelperGetValueGeneric(targetField, opArgs, buildCtx, true);
+}
+
+// <field>: +merge_recursive_key_in/$<definition_object>|$<object_reference>/$<key>
+TransformOp opBuilderHelperMergeRecursiveValue(const Reference& targetField,
+                                               const std::vector<OpArg>& opArgs,
+                                               const std::shared_ptr<const IBuildCtx>& buildCtx)
+{
+    return opBuilderHelperGetValueGeneric(targetField, opArgs, buildCtx, true, true);
 }
 
 } // namespace builder::builders

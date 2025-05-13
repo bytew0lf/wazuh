@@ -2,31 +2,29 @@
 # Created by Wazuh, Inc. <info@wazuh.com>.
 # This program is free software; you can redistribute it and/or modify it under the terms of GPLv2
 
-import copy
 import json
 import os
 import re
 import socket
 import ssl
+import typing
 from collections import OrderedDict
 from datetime import datetime
 from enum import Enum
+from glob import glob
 from os.path import exists
 from typing import Dict, Optional, Union
 
 import certifi
 import httpx
 import wazuh
-from api import configuration
 from wazuh import WazuhError, WazuhException, WazuhInternalError
 from wazuh.core import common
-from wazuh.core.cluster.utils import get_manager_status
-from wazuh.core.configuration import get_active_configuration, get_cti_url
-from wazuh.core.utils import get_utc_now, get_utc_strptime, tail
+from wazuh.core.configuration import get_cti_url
+from wazuh.core.utils import get_utc_now, get_utc_strptime, tail, temporary_cache
 from wazuh.core.wazuh_socket import WazuhSocket
-from wazuh.core.config.client import CentralizedConfig
 
-_re_logtest = re.compile(r"^.*(?:ERROR: |CRITICAL: )(?:\[.*\] )?(.*)$")
+_re_logtest = re.compile(r'^.*(?:ERROR: |CRITICAL: )(?:\[.*\] )?(.*)$')
 
 OSSEC_LOG_FIELDS = ['timestamp', 'tag', 'level', 'description']
 CTI_URL = get_cti_url()
@@ -39,14 +37,10 @@ DEFAULT_TIMEOUT = 10.0
 
 
 class LoggingFormat(Enum):
-    plain = "plain"
-    json = "json"
+    """Logging format enumerator."""
 
-
-def status() -> dict:
-    """Return the Manager processes that are running."""
-
-    return get_manager_status()
+    plain = 'plain'
+    json = 'json'
 
 
 def get_ossec_log_fields(log: str, log_format: LoggingFormat = LoggingFormat.plain) -> Union[tuple, None]:
@@ -66,7 +60,8 @@ def get_ossec_log_fields(log: str, log_format: LoggingFormat = LoggingFormat.pla
     """
     if log_format == LoggingFormat.plain:
         regex_category = re.compile(
-            r"^(\d\d\d\d/\d\d/\d\d\s\d\d:\d\d:\d\d)\s(\S+)(?:\[.*)?:\s(DEBUG|INFO|CRITICAL|ERROR|WARNING):(.*)$")
+            r'^(\d\d\d\d/\d\d/\d\d\s\d\d:\d\d:\d\d)\s(\S+)(?:\[.*)?:\s(DEBUG|INFO|CRITICAL|ERROR|WARNING):(.*)$'
+        )
 
         match = re.search(regex_category, log)
         if not match:
@@ -93,22 +88,10 @@ def get_ossec_log_fields(log: str, log_format: LoggingFormat = LoggingFormat.pla
     else:
         return None
 
-    if "rootcheck" in tag:  # Unify rootcheck category
-        tag = "wazuh-rootcheck"
+    if 'rootcheck' in tag:  # Unify rootcheck category
+        tag = 'wazuh-rootcheck'
 
     return get_utc_strptime(date, '%Y/%m/%d %H:%M:%S'), tag, level.lower(), description
-
-
-def get_wazuh_active_logging_format() -> LoggingFormat:
-    """Obtain the Wazuh active logging format.
-
-    Returns
-    -------
-    LoggingFormat
-        Wazuh active log format. Can either be `plain` or `json`. If it has both types, `plain` will be returned.
-    """
-    active_logging = get_active_configuration(component="com", configuration="logging")['logging']
-    return LoggingFormat.plain if active_logging['plain'] == "yes" else LoggingFormat.json
 
 
 def get_ossec_logs(limit: int = 2000) -> list:
@@ -126,13 +109,13 @@ def get_ossec_logs(limit: int = 2000) -> list:
     """
     logs = []
 
-    log_format = get_wazuh_active_logging_format()
+    log_format = LoggingFormat.plain
     if log_format == LoggingFormat.plain and exists(common.WAZUH_LOG):
         wazuh_log_content = tail(common.WAZUH_LOG, limit)
     elif log_format == LoggingFormat.json and exists(common.WAZUH_LOG_JSON):
         wazuh_log_content = tail(common.WAZUH_LOG_JSON, limit)
     else:
-        raise WazuhInternalError(1020)
+        raise WazuhInternalError(1000)
 
     for line in wazuh_log_content:
         log_fields = get_ossec_log_fields(line, log_format=log_format)
@@ -140,8 +123,12 @@ def get_ossec_logs(limit: int = 2000) -> list:
             date, tag, level, description = log_fields
 
             # We transform local time (ossec.log) to UTC with ISO8601 maintaining time integrity
-            log_line = {'timestamp': date.strftime(common.DATE_FORMAT), 'tag': tag,
-                        'level': level, 'description': description}
+            log_line = {
+                'timestamp': date.strftime(common.DATE_FORMAT),
+                'tag': tag,
+                'level': level,
+                'description': description,
+            }
             logs.append(log_line)
 
     return logs
@@ -192,7 +179,6 @@ def validate_ossec_conf() -> str:
     str
         Status of the configuration.
     """
-
     # Socket path
     wcom_socket_path = common.WCOM_SOCKET
     # Message for checking Wazuh configuration
@@ -265,10 +251,10 @@ def _get_ssl_context() -> ssl.SSLContext:
 
 
 def get_update_information_template(
-        uuid: str,
-        update_check: bool,
-        current_version: str = f"v{wazuh.__version__}",
-        last_check_date: Optional[datetime] = None
+    uuid: str,
+    update_check: bool,
+    current_version: str = f'v{wazuh.__version__}',
+    last_check_date: Optional[datetime] = None,
 ) -> dict:
     """Build and return a template for the update_information dict.
 
@@ -316,14 +302,11 @@ async def query_update_check_service(installation_uid: str) -> dict:
     headers = {
         WAZUH_UID_KEY: installation_uid,
         WAZUH_TAG_KEY: current_version,
-        USER_AGENT_KEY: f'Wazuh UpdateCheckService/{current_version}'
+        USER_AGENT_KEY: f'Wazuh UpdateCheckService/{current_version}',
     }
 
     update_information = get_update_information_template(
-        uuid=installation_uid,
-        update_check=True,
-        current_version=current_version,
-        last_check_date=get_utc_now()
+        uuid=installation_uid, update_check=True, current_version=current_version, last_check_date=get_utc_now()
     )
 
     async with httpx.AsyncClient(verify=_get_ssl_context(), timeout=httpx.Timeout(DEFAULT_TIMEOUT)) as client:
@@ -348,3 +331,51 @@ async def query_update_check_service(installation_uid: str) -> dict:
             update_information.update({'message': str(err), 'status_code': 500})
 
     return update_information
+
+
+@temporary_cache()
+def get_server_status(cache=False) -> typing.Dict:
+    """Get the current status of each process of the server.
+
+    Raises
+    ------
+    WazuhInternalError(1913)
+        If /proc directory is not found or permissions to see its status are not granted.
+
+    Returns
+    -------
+    data : dict
+        Dict whose keys are daemons and the values are the status.
+    """
+    # Check /proc directory availability
+    proc_path = '/proc'
+    try:
+        os.stat(proc_path)
+    except (PermissionError, FileNotFoundError) as e:
+        raise WazuhInternalError(1913, extra_message=str(e))
+
+    processes = ['wazuh-server', 'wazuh-engined', 'wazuh-server-management-apid', 'wazuh-comms-apid']
+
+    data, pidfile_regex, run_dir = {}, re.compile(r'.+\-(\d+)\.pid$'), common.WAZUH_RUN
+    for process in processes:
+        pidfile = glob(os.path.join(run_dir, f'{process}-*.pid'))
+        if os.path.exists(os.path.join(run_dir, f'{process}.failed')):
+            data[process] = 'failed'
+        elif os.path.exists(os.path.join(run_dir, '.restart')):
+            data[process] = 'restarting'
+        elif os.path.exists(os.path.join(run_dir, f'{process}.start')):
+            data[process] = 'starting'
+        elif pidfile:
+            # Iterate on pidfiles looking for the pidfile which has his pid in /proc,
+            # if the loop finishes, all pidfiles exist but their processes are not running,
+            # it means each process crashed and was not able to remove its own pidfile.
+            data[process] = 'failed'
+            for pid in pidfile:
+                if os.path.exists(os.path.join(proc_path, pidfile_regex.match(pid).group(1))):
+                    data[process] = 'running'
+                    break
+
+        else:
+            data[process] = 'stopped'
+
+    return data

@@ -77,31 +77,31 @@ The Wazuh WUI provides a powerful user interface for data visualization and anal
 
 **Modules overview**
 
-![Modules overview](https://github.com/wazuh/wazuh-dashboard-plugins/raw/master/screenshots/app.png)
+![Modules overview](https://github.com/wazuh/wazuh-dashboard-plugins/raw/main/screenshots/app.png)
 
 **Security events**
 
-![Overview](https://github.com/wazuh/wazuh-dashboard-plugins/blob/master/screenshots/app2.png)
+![Overview](https://github.com/wazuh/wazuh-dashboard-plugins/blob/main/screenshots/app2.png)
 
 **Integrity monitoring**
 
-![Overview](https://github.com/wazuh/wazuh-dashboard-plugins/blob/master/screenshots/app3.png)
+![Overview](https://github.com/wazuh/wazuh-dashboard-plugins/blob/main/screenshots/app3.png)
 
 **Vulnerability detection**
 
-![Overview](https://github.com/wazuh/wazuh-dashboard-plugins/blob/master/screenshots/app4.png)
+![Overview](https://github.com/wazuh/wazuh-dashboard-plugins/blob/main/screenshots/app4.png)
 
 **Regulatory compliance**
 
-![Overview](https://github.com/wazuh/wazuh-dashboard-plugins/blob/master/screenshots/app5.png)
+![Overview](https://github.com/wazuh/wazuh-dashboard-plugins/blob/main/screenshots/app5.png)
 
 **Agents overview**
 
-![Overview](https://github.com/wazuh/wazuh-dashboard-plugins/blob/master/screenshots/app6.png)
+![Overview](https://github.com/wazuh/wazuh-dashboard-plugins/blob/main/screenshots/app6.png)
 
 **Agent summary**
 
-![Overview](https://github.com/wazuh/wazuh-dashboard-plugins/blob/master/screenshots/app7.png)
+![Overview](https://github.com/wazuh/wazuh-dashboard-plugins/blob/main/screenshots/app7.png)
 
 ## Orchestration
 
@@ -125,7 +125,7 @@ Here you can find all the automation tools maintained by the Wazuh team.
 
 ## Branches
 
-* `master` branch contains the latest code, be aware of possible bugs on this branch.
+* `main` branch contains the latest code, be aware of possible bugs on this branch.
 * `stable` branch on correspond to the last Wazuh stable version.
 
 ## Software and libraries used
@@ -135,7 +135,7 @@ Here you can find all the automation tools maintained by the Wazuh team.
 |[bzip2](https://github.com/libarchive/bzip2)|1.0.8|Julian Seward|BSD License|
 |[cJSON](https://github.com/DaveGamble/cJSON)|1.7.12|Dave Gamble|MIT License|
 |[cPython](https://github.com/python/cpython)|3.10.13|Guido van Rossum|Python Software Foundation License version 2|
-|[cURL](https://github.com/curl/curl)|8.5.0|Daniel Stenberg|MIT License|
+|[cURL](https://github.com/curl/curl)|8.11.1|Daniel Stenberg|MIT License|
 |[Flatbuffers](https://github.com/google/flatbuffers/)|23.5.26|Google Inc.|Apache 2.0 License|
 |[GoogleTest](https://github.com/google/googletest)|1.11.0|Google Inc.|3-Clause "New" BSD License|
 |[jemalloc](https://github.com/jemalloc/jemalloc)|5.2.1|Jason Evans|2-Clause "Simplified" BSD License|

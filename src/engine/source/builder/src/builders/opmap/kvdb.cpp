@@ -20,10 +20,19 @@ TransformOp KVDBGet(std::shared_ptr<IKVDBManager> kvdbManager,
                     const Reference& targetField,
                     const std::vector<OpArg>& opArgs,
                     const std::shared_ptr<const IBuildCtx>& buildCtx,
-                    const bool doMerge)
+                    const bool doMerge,
+                    const bool isRecursive)
 {
     // Assert expected number of parameters
     utils::assertSize(opArgs, 2);
+
+    // Allowed fields check
+    const auto assetType = base::Name(buildCtx->context().assetName).parts().front();
+    if (!buildCtx->allowedFields().check(assetType, targetField.dotPath()))
+    {
+        throw std::runtime_error(fmt::format("Field '{}' is not allowed in '{}'", targetField.dotPath(), assetType));
+    }
+
     // First argument is kvdb name
     utils::assertValue(opArgs, 0);
     if (!std::static_pointer_cast<Value>(opArgs[0])->value().isString())
@@ -116,11 +125,15 @@ TransformOp KVDBGet(std::shared_ptr<IKVDBManager> kvdbManager,
     const auto failureTrace6 = fmt::format("{} -> Malformed JSON for value in DB", name);
     const auto failureTrace7 =
         fmt::format("{} -> Value from DB failed validation for '{}': ", name, targetField.dotPath());
+    const auto failureTrace8 = fmt::format(
+        "{} -> Cannot map subfields of {} because is not allowed for {}", name, targetField.dotPath(), assetType);
 
     // Return Op
     return [=,
             runState = buildCtx->runState(),
             targetField = targetField.jsonPath(),
+            targetFieldDotPath = targetField.dotPath(),
+            allowedFields = buildCtx->allowedFieldsPtr(),
             kvdbHandler = std::get<std::shared_ptr<kvdbManager::IKVDBHandler>>(resultHandler)](
                base::Event event) -> TransformResult
     {
@@ -166,6 +179,18 @@ TransformOp KVDBGet(std::shared_ptr<IKVDBManager> kvdbManager,
                     RETURN_FAILURE(runState, event, failureTrace7 + res.value().message);
                 }
             }
+            if (value.isObject())
+            {
+                auto fields = value.getFields().value();
+                for (const auto& field : fields)
+                {
+                    if (!allowedFields->check(assetType, DotPath::append(targetFieldDotPath, field)))
+                    {
+                        RETURN_FAILURE(runState, event, failureTrace8)
+                    }
+                }
+            }
+
             if (doMerge)
             {
                 if (!event->exists(targetField))
@@ -177,7 +202,12 @@ TransformOp KVDBGet(std::shared_ptr<IKVDBManager> kvdbManager,
                 {
                     RETURN_FAILURE(runState, event, failureTrace5)
                 }
-                event->merge(json::NOT_RECURSIVE, value, targetField);
+
+                if (value.isObject())
+                {
+                    // Check that merging with target field does not fall outside allowed fields
+                }
+                event->merge(isRecursive ? json::RECURSIVE : json::NOT_RECURSIVE, value, targetField);
             }
             else
             {
@@ -212,6 +242,18 @@ TransformBuilder getOpBuilderKVDBGetMerge(std::shared_ptr<IKVDBManager> kvdbMana
                                         const std::shared_ptr<const IBuildCtx>& buildCtx)
     {
         return KVDBGet(kvdbManager, kvdbScopeName, targetField, opArgs, buildCtx, true);
+    };
+}
+
+// <field>: +kvdb_get_merge_recursive/<DB>/<ref_key>
+TransformBuilder getOpBuilderKVDBGetMergeRecursive(std::shared_ptr<IKVDBManager> kvdbManager,
+                                                   const std::string& kvdbScopeName)
+{
+    return [kvdbManager, kvdbScopeName](const Reference& targetField,
+                                        const std::vector<OpArg>& opArgs,
+                                        const std::shared_ptr<const IBuildCtx>& buildCtx)
+    {
+        return KVDBGet(kvdbManager, kvdbScopeName, targetField, opArgs, buildCtx, true, true);
     };
 }
 
@@ -322,12 +364,18 @@ FilterBuilder getOpBuilderKVDBNotMatch(std::shared_ptr<IKVDBManager> kvdbManager
 TransformOp KVDBSet(std::shared_ptr<IKVDBManager> kvdbManager,
                     const std::string& kvdbScopeName,
                     const Reference& targetField,
-
                     const std::vector<OpArg>& opArgs,
                     const std::shared_ptr<const IBuildCtx>& buildCtx)
 {
     // Assert expected number of parameters
     utils::assertSize(opArgs, 3);
+
+    // Allowed fields check
+    const auto assetType = base::Name(buildCtx->context().assetName).parts().front();
+    if (!buildCtx->allowedFields().check(assetType, targetField.dotPath()))
+    {
+        throw std::runtime_error(fmt::format("Field '{}' is not allowed in '{}'", targetField.dotPath(), assetType));
+    }
 
     // First argument is kvdb name
     utils::assertValue(opArgs, 0);
@@ -499,6 +547,13 @@ TransformOp KVDBDelete(std::shared_ptr<IKVDBManager> kvdbManager,
     // Assert expected number of parameters
     utils::assertSize(opArgs, 2);
 
+    // Allowed fields check
+    const auto assetType = base::Name(buildCtx->context().assetName).parts().front();
+    if (!buildCtx->allowedFields().check(assetType, targetField.dotPath()))
+    {
+        throw std::runtime_error(fmt::format("Field '{}' is not allowed in '{}'", targetField.dotPath(), assetType));
+    }
+
     // First argument is kvdb name
     utils::assertValue(opArgs, 0);
     if (!std::static_pointer_cast<Value>(opArgs[0])->value().isString())
@@ -639,6 +694,14 @@ TransformBuilder getOpBuilderKVDBGetArray(std::shared_ptr<IKVDBManager> kvdbMana
     {
         // Assert expected number of parameters
         utils::assertSize(opArgs, 2);
+
+        // Check Allowed fields
+        const auto assetType = base::Name(buildCtx->context().assetName).parts().front();
+        if (!buildCtx->allowedFields().check(assetType, targetField.dotPath()))
+        {
+            throw std::runtime_error(
+                fmt::format("Field '{}' is not allowed in '{}'", targetField.dotPath(), assetType));
+        }
 
         // First argument is kvdb name
         utils::assertValue(opArgs, 0);
@@ -935,6 +998,13 @@ TransformOp OpBuilderHelperKVDBDecodeBitmask(const Reference& targetField,
     utils::assertSize(opArgs, 3);
     utils::assertValue(opArgs, 0, 1);
     utils::assertRef(opArgs, 2);
+
+    // Check Allowed fields
+    const auto assetType = base::Name(buildCtx->context().assetName).parts().front();
+    if (!buildCtx->allowedFields().check(assetType, targetField.dotPath()))
+    {
+        throw std::runtime_error(fmt::format("Field '{}' is not allowed in '{}'", targetField.dotPath(), assetType));
+    }
 
     // Extract parameters
     if (!std::static_pointer_cast<Value>(opArgs[0])->value().isString())

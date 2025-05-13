@@ -126,7 +126,9 @@ Feature: Catalog API Management
     Then I should receive a success response
     And I should receive the next content
       """
-      name: decoder/testing/0
+      {
+        "name":"decoder/testing/0"
+      }
       """
 
 
@@ -309,9 +311,12 @@ Feature: Catalog API Management
     Then I should receive a success response
     And I should receive the next content
       """
-      name: decoder/testing/0
-      metadata:
-        description: this is a test decoder
+      {
+        "name":"decoder/testing/0",
+        "metadata": {
+          "description": "this is a test decoder"
+        }
+      }
       """
 
 
@@ -356,7 +361,7 @@ Feature: Catalog API Management
         parse|message:
           - <user> <ip> <address>
       """
-    Then I should receive a failed response indicating "An error occurred while parsing a log: Field 'user' not found in schema"
+    Then I should receive a failed response indicating "An error occurred while parsing a log: Parser for ECS type 'object' not supported, needed for field 'user'"
 
 
   Scenario: Try to validate the resource that has a duplicate stage parse
@@ -399,7 +404,7 @@ Feature: Catalog API Management
     When I send a request to validate in the "yml" format in the resource "decoder/testing/0" that contains
       """
         name: decoder/testing/0
-        check: $wazuh.origin == /var/log/apache2/access.log
+        check: $log.file.path == /var/log/apache2/access.log
         parse|message:
           - <event.code> <event.kind> <event.action>
         normalize:

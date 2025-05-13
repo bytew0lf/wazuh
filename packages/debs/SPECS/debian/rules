@@ -25,6 +25,9 @@ export JOBS="5"
 export DEBUG_ENABLED="no"
 export PATH="${PATH}"
 export LD_LIBRARY_PATH=""
+export WAZUH_USER="wazuh-server"
+export WAZUH_GROUP="wazuh-server"
+export SHORT_COMMIT_HASH=""
 
 %:
 	dh $@
@@ -54,7 +57,11 @@ override_dh_install:
 	USER_AUTO_START="n" \
 	USER_CREATE_SSL_CERT="n" \
 	DOWNLOAD_CONTENT="y" \
-	./install.sh
+	./install.sh || { echo "install.sh failed! Aborting." >&2; exit 1; }
+
+	echo "Short commit hash: ${SHORT_COMMIT_HASH}"
+	sed -i '/"stage":/s/$$/,/; /"stage":/a \    "commit": "'"${SHORT_COMMIT_HASH}"'"' $(INSTALLATION_DIR)usr/share/wazuh-server/VERSION.json
+	cat $(INSTALLATION_DIR)usr/share/wazuh-server/VERSION.json
 
 	# Copying to target
 	mkdir -p $(TARGET_DIR)$(INSTALLATION_DIR)/tmp
@@ -66,16 +73,15 @@ override_dh_install:
 
 
 	cp -p $(INSTALLATION_DIR)usr/share/wazuh-server/bin/wazuh-engine $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server/bin/
-	cp -p $(INSTALLATION_DIR)usr/share/wazuh-server/bin/wazuh-apid $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server/bin/
+	cp -p $(INSTALLATION_DIR)usr/share/wazuh-server/bin/wazuh-server-management-apid $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server/bin/
 	cp -p $(INSTALLATION_DIR)usr/share/wazuh-server/bin/wazuh-comms-apid $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server/bin/
 	cp -p $(INSTALLATION_DIR)usr/share/wazuh-server/bin/wazuh-server $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server/bin/
+	cp -p $(INSTALLATION_DIR)usr/share/wazuh-server/bin/wazuh-keystore $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server/bin/
 
-	cp -pr $(INSTALLATION_DIR)run/wazuh-server $(TARGET_DIR)$(INSTALLATION_DIR)run/
 	cp -pr $(INSTALLATION_DIR)var/lib/wazuh-server $(TARGET_DIR)$(INSTALLATION_DIR)var/lib/
 	cp -pr $(INSTALLATION_DIR)var/log/wazuh-server $(TARGET_DIR)$(INSTALLATION_DIR)var/log/
 	cp -pr $(INSTALLATION_DIR)usr/share/wazuh-server $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/
 	cp -pr $(INSTALLATION_DIR)etc/wazuh-server $(TARGET_DIR)$(INSTALLATION_DIR)etc/
-
 	# Copying init.d script
 	mkdir -p ${TARGET_DIR}/etc/init.d/
 	sed -i "s:WAZUH_HOME_TMP:${INSTALLATION_DIR}:g" src/init/templates/wazuh-server-debian.init
@@ -87,29 +93,29 @@ override_dh_install:
 	install -m 0644 src/init/templates/wazuh-server.service ${TARGET_DIR}/usr/lib/systemd/system/
 
 override_dh_fixperms:
-	dh_fixperms
+	dh_fixperms -X /etc/wazuh-server
 	# Folders
-	chown -R wazuh:wazuh $(TARGET_DIR)$(INSTALLATION_DIR)run/wazuh-server
-	find $(TARGET_DIR)$(INSTALLATION_DIR)run/wazuh-server -type d -exec chmod 750 {} \; -o -type f -exec chmod 640 {} \;
-	chown -R wazuh:wazuh $(TARGET_DIR)$(INSTALLATION_DIR)var/lib/wazuh-server
+	chown -R $(WAZUH_USER):$(WAZUH_GROUP) $(TARGET_DIR)$(INSTALLATION_DIR)var/lib/wazuh-server
 	find $(TARGET_DIR)$(INSTALLATION_DIR)var/lib/wazuh-server -type d -exec chmod 750 {} \; -o -type f -exec chmod 640 {} \;
-	chown -R wazuh:wazuh $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server
+	chown -R $(WAZUH_USER):$(WAZUH_GROUP) $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server
 	find $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server -type d -exec chmod 750 {} \; -o -type f -exec chmod 640 {} \;
-	chown -R wazuh:wazuh $(TARGET_DIR)$(INSTALLATION_DIR)etc/wazuh-server
-	find $(TARGET_DIR)$(INSTALLATION_DIR)etc/wazuh-server -type d -exec chmod 750 {} \; -o -type f -exec chmod 640 {} \;
-	chown -R wazuh:wazuh $(TARGET_DIR)$(INSTALLATION_DIR)var/log/wazuh-server
-	find $(TARGET_DIR)$(INSTALLATION_DIR)var/log/wazuh-server -type d -exec chmod 755 {} \; -o -type f -exec chmod 644 {} \;
 
 	# Binaries
-	chown wazuh:wazuh $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server/bin/wazuh-engine
-	chmod 750 $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server/bin/wazuh-apid
-	chown wazuh:wazuh $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server/bin/wazuh-apid
+	chown $(WAZUH_USER):$(WAZUH_GROUP) $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server/bin/wazuh-keystore
+	chmod 750 $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server/bin/wazuh-keystore
+	chown $(WAZUH_USER):$(WAZUH_GROUP) $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server/bin/wazuh-engine
 	chmod 750 $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server/bin/wazuh-engine
-	chown wazuh:wazuh $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server/bin/wazuh-comms-apid
+	chown $(WAZUH_USER):$(WAZUH_GROUP) $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server/bin/wazuh-server-management-apid
+	chmod 750 $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server/bin/wazuh-server-management-apid
+	chown $(WAZUH_USER):$(WAZUH_GROUP) $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server/bin/wazuh-comms-apid
 	chmod 750 $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server/bin/wazuh-comms-apid
-	chown wazuh:wazuh $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server/bin/wazuh-server
+	chown $(WAZUH_USER):$(WAZUH_GROUP) $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server/bin/wazuh-server
 	chmod 750 $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server/bin/wazuh-server
 
+	# Scripts
+	chmod 750 $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server/framework/scripts/wazuh-server.py
+	chmod 750 $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server/apis/scripts/wazuh-comms-apid.py
+	chmod 750 $(TARGET_DIR)$(INSTALLATION_DIR)usr/share/wazuh-server/apis/scripts/wazuh-server-management-apid.py
 
 	# Services
 	chown root:root $(TARGET_DIR)/etc/init.d/wazuh-server

@@ -1,0 +1,296 @@
+# Excluded endpoints (no permissions required):
+# - GET /
+# - DELETE /security/user/authenticate
+# - POST /security/user/authenticate
+# - GET /security/users/me
+# - POST /security/user/authenticate/run_as
+# - GET /security/users/me/policies
+# - GET /security/actions
+# - GET /security/resources
+
+---
+test_name: DELETE /agents
+
+stages:
+  - name: Try to remove all agents (generic)
+    request:
+      verify: False
+      url: "{protocol:s}://{host:s}:{port:d}/agents"
+      method: DELETE
+      params:
+        agents_list: all
+        status: all
+      headers:
+        Authorization: "Bearer {test_login_token}"
+    response:
+      <<: *empty_response
+
+  - name: Try to remove one agent (specific)
+    request:
+      verify: False
+      url: "{protocol:s}://{host:s}:{port:d}/agents"
+      method: DELETE
+      params:
+        agents_list: '001'
+        status: all
+      headers:
+        Authorization: "Bearer {test_login_token}"
+    response:
+      <<: *permission_denied
+
+---
+test_name: GET /agents
+
+stages:
+  - name: Try to get all agents (generic)
+    request:
+      verify: False
+      url: "{protocol:s}://{host:s}:{port:d}/agents"
+      method: GET
+      headers:
+        Authorization: "Bearer {test_login_token}"
+    response:
+      <<: *empty_response
+
+  - name: Try to get one agent (specific)
+    request:
+      verify: False
+      url: "{protocol:s}://{host:s}:{port:d}/agents"
+      method: GET
+      params:
+        agents_list: '001'
+      headers:
+        Authorization: "Bearer {test_login_token}"
+    response:
+      <<: *permission_denied
+
+---
+test_name: POST /agents
+
+stages:
+  - name: Try to create a new agent
+    request:
+      verify: False
+      url: "{protocol:s}://{host:s}:{port:d}/agents"
+      method: POST
+      headers:
+        Authorization: "Bearer {test_login_token}"
+      json:
+        name: "NewAgentPost"
+        ip: "any"
+    response:
+      <<: *permission_denied
+
+---
+test_name: PUT /agents/{agent_id}/restart
+
+stages:
+  - name: Try to restart agent 001
+    request:
+      verify: False
+      url: "{protocol:s}://{host:s}:{port:d}/agents/001/restart"
+      method: PUT
+      headers:
+        Authorization: "Bearer {test_login_token}"
+    response:
+      <<: *permission_denied
+
+---
+test_name: DELETE /agents/group
+
+stages:
+  - name: Try to remove agents 006 and 010 from group2
+    request:
+      verify: False
+      url: "{protocol:s}://{host:s}:{port:d}/agents/group"
+      method: DELETE
+      headers:
+        Authorization: "Bearer {test_login_token}"
+      params:
+        agents_list: 006,010
+        group_id: group2
+    response:
+      <<: *permission_denied
+
+---
+test_name: PUT /agents/group
+
+stages:
+  - name: Try to assign all agents to group2
+    request:
+      verify: False
+      url: "{protocol:s}://{host:s}:{port:d}/agents/group"
+      method: PUT
+      headers:
+        Authorization: "Bearer {test_login_token}"
+      params:
+        group_id: group2
+    response:
+      <<: *permission_denied
+
+---
+test_name: PUT /agents/reconnect
+
+stages:
+  - name: Try to reconnect all agents (generic)
+    request:
+      verify: False
+      url: "{protocol:s}://{host:s}:{port:d}/agents/reconnect"
+      method: PUT
+      headers:
+        Authorization: "Bearer {test_login_token}"
+    response:
+      <<: *empty_response
+
+  - name: Try to reconnect agent 001 (specific)
+    request:
+      verify: False
+      url: "{protocol:s}://{host:s}:{port:d}/agents/reconnect"
+      method: PUT
+      params:
+        agents_list: '001'
+      headers:
+        Authorization: "Bearer {test_login_token}"
+    response:
+      <<: *permission_denied
+
+---
+test_name: PUT /agents/restart
+
+stages:
+  - name: Try to restart all agents (generic)
+    request:
+      verify: False
+      url: "{protocol:s}://{host:s}:{port:d}/agents/restart"
+      method: PUT
+      headers:
+        Authorization: "Bearer {test_login_token}"
+    response:
+      <<: *empty_response
+
+  - name: Try to restart agent 001 (specific)
+    request:
+      verify: False
+      url: "{protocol:s}://{host:s}:{port:d}/agents/restart"
+      method: PUT
+      params:
+        agents_list: '001'
+      headers:
+        Authorization: "Bearer {test_login_token}"
+    response:
+      <<: *permission_denied
+
+---
+test_name: DELETE /groups
+
+stages:
+  - name: Try to delete all groups (generic)
+    request:
+      verify: False
+      url: "{protocol:s}://{host:s}:{port:d}/groups"
+      method: DELETE
+      params:
+        groups_list: all
+      headers:
+        Authorization: "Bearer {test_login_token}"
+    response:
+      <<: *empty_response
+
+  - name: Try to delete group3 (specific)
+    request:
+      verify: False
+      url: "{protocol:s}://{host:s}:{port:d}/groups"
+      method: DELETE
+      params:
+        groups_list: group3
+      headers:
+        Authorization: "Bearer {test_login_token}"
+    response:
+      <<: *permission_denied
+
+---
+test_name: GET /groups
+
+stages:
+  - name: Try to get all groups (generic)
+    request:
+      verify: False
+      url: "{protocol:s}://{host:s}:{port:d}/groups"
+      method: GET
+      headers:
+        Authorization: "Bearer {test_login_token}"
+    response:
+      <<: *empty_response
+
+  - name: Try to get group1 (specific)
+    request:
+      verify: False
+      url: "{protocol:s}://{host:s}:{port:d}/groups"
+      method: GET
+      params:
+        groups_list: group1
+      headers:
+        Authorization: "Bearer {test_login_token}"
+    response:
+      <<: *permission_denied
+
+---
+test_name: POST /groups
+
+stages:
+  - name: Try to create new group
+    request:
+      verify: False
+      url: "{protocol:s}://{host:s}:{port:d}/groups"
+      method: POST
+      json:
+        group_id: "group5"
+      headers:
+        Authorization: "Bearer {test_login_token}"
+    response:
+      <<: *permission_denied
+
+---
+test_name: GET /groups/{group_id}/agents
+
+stages:
+  - name: Try to get agents in group1
+    request:
+      verify: False
+      url: "{protocol:s}://{host:s}:{port:d}/groups/group1/agents"
+      method: GET
+      headers:
+        Authorization: "Bearer {test_login_token}"
+    response:
+      <<: *permission_denied
+
+---
+test_name: GET /groups/{group_id}/configuration
+
+stages:
+  - name: Try to get group1 configuration
+    request:
+      verify: False
+      url: "{protocol:s}://{host:s}:{port:d}/groups/group1/configuration"
+      method: GET
+      headers:
+        Authorization: "Bearer {test_login_token}"
+    response:
+      <<: *permission_denied
+
+---
+test_name: PUT /groups/{group_id}/configuration
+
+stages:
+  - name: Try to update group1 configuration
+    request:
+      verify: False
+      url: "{protocol:s}://{host:s}:{port:d}/groups/group1/configuration"
+      method: PUT
+      data:
+        "{file_xml:s}"
+      headers:
+        Authorization: "Bearer {test_login_token}"
+        content-type: "application/xml"
+    response:
+      <<: *permission_denied

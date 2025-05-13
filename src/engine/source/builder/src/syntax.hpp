@@ -13,22 +13,32 @@
 namespace builder::syntax
 {
 
+namespace allowedfields
+{
+constexpr auto NAME_KEY = "name";                            ///< Key for the name of the document.
+const auto NAME_PATH = json::Json::formatJsonPath(NAME_KEY); ///< Path to the name field in a document.
+constexpr auto ALLOWED_FIELDS_KEY = "allowed_fields";        ///< Key for the allowed fields in a document.
+const auto ALLOWED_FIELDS_PATH =
+    json::Json::formatJsonPath(ALLOWED_FIELDS_KEY); ///< Path to the allowed fields in a document.
+} // namespace allowedfields
+
 // Asset syntax
 namespace asset
 {
-constexpr auto NAME_KEY = "name";                    ///< Key for the name field in an asset.
-constexpr auto METADATA_KEY = "metadata";            ///< Key for the metadata field in an asset.
-constexpr auto PARENTS_KEY = "parents";              ///< Key for the parents field in an asset.
-constexpr auto CHECK_KEY = "check";                  ///< Key for the check stage in an asset.
-constexpr auto PARSE_KEY = "parse";                  ///< Key for the parse stage in an asset.
-constexpr auto NORMALIZE_KEY = "normalize";          ///< Key for the normalize stage in an asset.
-constexpr auto MAP_KEY = "map";                      ///< Key for the map stage in an asset.
-constexpr auto DEFINITIONS_KEY = "definitions";      ///< Key for the definitions stage in an asset.
-constexpr auto OUTPUTS_KEY = "outputs";              ///< Key for the outputs stage in an asset.
-constexpr auto FILE_OUTPUT_KEY = "file";             ///< Key for the file output stage in an asset.
-constexpr auto FILE_OUTPUT_PATH_KEY = "path";        ///< Key for the file output path in an asset.
-constexpr auto INDEXER_OUTPUT_KEY = "wazuh-indexer"; ///< Key for the INDEXER output stage in an asset.
-constexpr auto INDEXER_OUTPUT_INDEX_KEY = "index";   ///< Key for the INDEXER output stage in an asset.
+constexpr auto NAME_KEY = "name";                     ///< Key for the name field in an asset.
+constexpr auto METADATA_KEY = "metadata";             ///< Key for the metadata field in an asset.
+constexpr auto PARENTS_KEY = "parents";               ///< Key for the parents field in an asset.
+constexpr auto CHECK_KEY = "check";                   ///< Key for the check stage in an asset.
+constexpr auto PARSE_KEY = "parse";                   ///< Key for the parse stage in an asset.
+constexpr auto NORMALIZE_KEY = "normalize";           ///< Key for the normalize stage in an asset.
+constexpr auto RULE_NORMALIZE_KEY = "rule_normalize"; ///< Key for the normalize stage in an asset.
+constexpr auto MAP_KEY = "map";                       ///< Key for the map stage in an asset.
+constexpr auto DEFINITIONS_KEY = "definitions";       ///< Key for the definitions stage in an asset.
+constexpr auto OUTPUTS_KEY = "outputs";               ///< Key for the outputs stage in an asset.
+constexpr auto FILE_OUTPUT_KEY = "file";              ///< Key for the file output stage in an asset.
+constexpr auto FILE_OUTPUT_PATH_KEY = "path";         ///< Key for the file output path in an asset.
+constexpr auto INDEXER_OUTPUT_KEY = "wazuh-indexer";  ///< Key for the INDEXER output stage in an asset.
+constexpr auto INDEXER_OUTPUT_INDEX_KEY = "index";    ///< Key for the INDEXER output stage in an asset.
 
 constexpr auto CONDITION_NAME =
     "condition"; ///< Name of the condition expression in the asset to be displayed in traces.

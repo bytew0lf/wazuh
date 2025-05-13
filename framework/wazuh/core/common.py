@@ -147,7 +147,6 @@ def context_cached(key: str = '') -> Any:
 
 def reset_context_cache() -> None:
     """Reset context cache."""
-
     for context_var in _context_cache.values():
         context_var.set(None)
 
@@ -160,27 +159,26 @@ def get_context_cache() -> dict:
     dict
         Dictionary with the context variables representing the cache.
     """
-
     return _context_cache
 
 
 # ================================================= Context variables ==================================================
 rbac: ContextVar[Dict] = ContextVar('rbac', default={'rbac_mode': 'black'})
+rbac_manager: ContextVar[Any] = ContextVar('rbac_manager', default=None)
 current_user: ContextVar[str] = ContextVar('current_user', default='')
 broadcast: ContextVar[bool] = ContextVar('broadcast', default=False)
-cluster_nodes: ContextVar[list] = ContextVar('cluster_nodes', default=list())
 origin_module: ContextVar[str] = ContextVar('origin_module', default='framework')
 try:
-    mp_pools: ContextVar[Dict] = ContextVar('mp_pools', default={
-        'process_pool': ProcessPoolExecutor(max_workers=1),
-        'authentication_pool': ProcessPoolExecutor(max_workers=1),
-        'events_pool': ProcessPoolExecutor(max_workers=1)
-    })
+    mp_pools: ContextVar[Dict] = ContextVar(
+        'mp_pools',
+        default={
+            'process_pool': ProcessPoolExecutor(max_workers=1),
+            'authentication_pool': ProcessPoolExecutor(max_workers=1),
+        },
+    )
 # Handle exception when the user running Wazuh cannot access /dev/shm.
 except (FileNotFoundError, PermissionError):
-    mp_pools: ContextVar[Dict] = ContextVar('mp_pools', default={
-        'thread_pool': ThreadPoolExecutor(max_workers=1)
-    })
+    mp_pools: ContextVar[Dict] = ContextVar('mp_pools', default={'thread_pool': ThreadPoolExecutor(max_workers=1)})
 _context_cache = dict()
 
 
@@ -189,8 +187,8 @@ _context_cache = dict()
 cache_event = Event()
 _WAZUH_UID = None
 _WAZUH_GID = None
-GROUP_NAME = 'wazuh'
-USER_NAME = 'wazuh'
+GROUP_NAME = 'wazuh-server'
+USER_NAME = 'wazuh-server'
 
 # TODO: Keep until we remove the different deprecated functionalities that are importing it.
 WAZUH_PATH = ''
@@ -212,18 +210,15 @@ WAZUH_RUN = RUN_ROOT / WAZUH_SERVER
 WAZUH_LOG = VAR_LOG / WAZUH_SERVER
 WAZUH_LIB = VAR_LIB / WAZUH_SERVER
 
-WAZUH_QUEUE = WAZUH_RUN / 'cluster'
-
-WAZUH_SHARED = WAZUH_ETC / 'shared'
-
-LOCAL_SERVER_SOCKET = 'local-server.sock'
-LOCAL_SERVER_SOCKET_PATH = WAZUH_RUN / LOCAL_SERVER_SOCKET
+WAZUH_GROUPS = WAZUH_ETC / 'groups'
 
 CONFIG_SERVER_SOCKET = 'config-server.sock'
 CONFIG_SERVER_SOCKET_PATH = WAZUH_RUN / CONFIG_SERVER_SOCKET
 
 COMMS_API_SOCKET = 'comms-api.sock'
 COMMS_API_SOCKET_PATH = WAZUH_RUN / COMMS_API_SOCKET
+MANAGEMENT_API_SOCKET = 'management-api.sock'
+MANAGEMENT_API_SOCKET_PATH = WAZUH_RUN / MANAGEMENT_API_SOCKET
 
 
 # ============================================= Wazuh constants - Commands =============================================
@@ -232,8 +227,8 @@ RESTART_WAZUH_COMMAND = 'restart-wazuh'
 
 
 # =========================================== Wazuh constants - Date format ============================================
-DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
-DECIMALS_DATE_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
+DATE_FORMAT = '%Y-%m-%dT%H:%M:%SZ'
+DECIMALS_DATE_FORMAT = '%Y-%m-%dT%H:%M:%S.%fZ'
 
 
 # ========================================= Wazuh constants - Size and limits ==========================================
@@ -246,7 +241,7 @@ MAXIMUM_DATABASE_LIMIT = 100000
 
 # ================================================ Wazuh path - Config =================================================
 WAZUH_SERVER_YML = WAZUH_ETC / 'wazuh-server.yml'
-
+WAZUH_INDEXER_CA_BUNDLE = WAZUH_ETC / 'certs' / 'root-ca-merged.pem'
 
 # ================================================= Wazuh path - Misc ==================================================
 DEFAULT_RBAC_RESOURCES = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), 'rbac', 'default')
